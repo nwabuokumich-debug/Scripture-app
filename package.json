@@ -1,0 +1,11 @@
+{
+  "name": "bible-db-importer",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "import": "node import.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}

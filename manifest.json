@@ -1,0 +1,13 @@
+{
+  "name": "Scripture — KJV Bible",
+  "short_name": "Scripture",
+  "description": "KJV Bible with study stacks",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#e74252",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
