@@ -529,8 +529,15 @@ body.theme-dark {
   .app.sidebar-open .sidebar-backdrop { display: block; }
 
   /* ── Show hamburger, show X inside sidebar ── */
-  .sidebar-open { display: block !important; font-size: 1.3rem; padding: 4px 10px; }
-  .sidebar-toggle { display: block !important; font-size: 1.2rem; padding: 6px 10px; }
+  .sidebar-open { display: block !important; font-size: 1.4rem; padding: 4px 10px; }
+  .sidebar-toggle {
+    display: block !important;
+    font-size: 1.4rem;
+    padding: 8px 12px;
+    color: var(--text);
+    background: var(--surface);
+    border-radius: 8px;
+  }
 
   /* ── Main col always full width ── */
   .main-col { width: 100%; }
