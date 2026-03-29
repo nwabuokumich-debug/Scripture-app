@@ -1,5 +1,6 @@
 const CACHE = 'scripture-v1';
-const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/config.js', '/manifest.json', '/icon.svg'];
+const BASE = self.location.pathname.replace('/sw.js', '');
+const SHELL = [BASE + '/', BASE + '/index.html', BASE + '/style.css', BASE + '/app.js', BASE + '/config.js', BASE + '/manifest.json', BASE + '/icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
