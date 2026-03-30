@@ -1,13 +1,16 @@
 {
   "name": "Scripture — KJV Bible",
   "short_name": "Scripture",
-  "description": "KJV Bible with study stacks",
+  "description": "KJV Bible with study stacks and Greek word analysis",
   "start_url": "/Scripture-app/",
+  "scope": "/Scripture-app/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#e74252",
   "orientation": "portrait",
+  "categories": ["books", "education"],
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
   ]
 }

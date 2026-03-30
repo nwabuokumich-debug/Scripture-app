@@ -101,11 +101,11 @@ function showPrompt(title, placeholder = '') {
   });
 }
 
-function showConfirm(title) {
+function showConfirm(title, confirmLabel = 'Delete') {
   return new Promise(resolve => {
     modalTitle.textContent = title;
     modalInput.style.display = 'none';
-    modalConfirm.textContent = 'Delete';
+    modalConfirm.textContent = confirmLabel;
     modalConfirm.classList.add('danger');
     modalBackdrop.classList.remove('hidden');
 
@@ -114,12 +114,18 @@ function showConfirm(title) {
       modalConfirm.classList.remove('danger');
       modalCancel.removeEventListener('click', cancel);
       modalConfirm.removeEventListener('click', confirm);
+      document.removeEventListener('keydown', keydown);
       resolve(val);
     }
     function confirm() { done(true); }
     function cancel()  { done(false); }
+    function keydown(e) {
+      if (e.key === 'Escape') cancel();
+      if (e.key === 'Enter') confirm();
+    }
     modalConfirm.addEventListener('click', confirm);
     modalCancel.addEventListener('click', cancel);
+    document.addEventListener('keydown', keydown);
   });
 }
 
@@ -158,6 +164,7 @@ async function selectBook(book) {
   activeBook = book;
   activeChapter = null;
   renderBookList();
+  if (window.innerWidth <= 680) closeSidebar();
 
   const { data } = await supabase
     .from('verses')
@@ -191,7 +198,7 @@ async function selectChapter(num) {
     btn.classList.toggle('active', i + 1 === num);
   });
 
-  verseArea.innerHTML = `<div class="state-msg">Loading...</div>`;
+  verseArea.innerHTML = `<div class="state-msg"><span class="spinner"></span> Loading…</div>`;
 
   const { data, error } = await supabase
     .from('verses')
@@ -284,7 +291,7 @@ async function showGreekPage(verseNum, verseText, greekWords) {
     <div class="gp-scroll">
       <div class="gp-verse-text">${escHtml(verseText)}</div>
       <div class="gp-words" id="gp-words">
-        <div class="state-msg" style="margin-top:40px">Loading Greek data…</div>
+        <div class="state-msg" style="margin-top:40px"><span class="spinner"></span> Loading Greek data…</div>
       </div>
     </div>
   `;
@@ -351,6 +358,9 @@ function parseReference(query) {
 async function doSearch() {
   const query = searchInput.value.trim();
   if (!query) return;
+  searchBtn.disabled = true;
+  searchBtn.textContent = '…';
+  try {
 
   // ── Reference search: "Psalm 1", "John 3:16-18", etc. ────────────────
   const ref = parseReference(query);
@@ -401,7 +411,7 @@ async function doSearch() {
     return;
   }
 
-  verseArea.innerHTML = `<div class="state-msg">Searching...</div>`;
+  verseArea.innerHTML = `<div class="state-msg"><span class="spinner"></span> Searching…</div>`;
   chapterBar.innerHTML = '';
   activeBook = null;
   activeChapter = null;
@@ -458,6 +468,11 @@ async function doSearch() {
   });
 
   verseArea.scrollTop = 0;
+
+  } finally {
+    searchBtn.disabled = false;
+    searchBtn.textContent = 'Search';
+  }
 }
 
 // ── Welcome screen ────────────────────────────────────
@@ -593,6 +608,7 @@ function openStack(id) {
   activeStackId = id;
   renderStacksList();
   renderStackView(id);
+  if (window.innerWidth <= 680) closeSidebar();
 }
 
 // ── Render stack in main area ─────────────────────────
@@ -661,8 +677,9 @@ function renderStackView(id) {
   });
 
   verseArea.querySelectorAll('.remove-verse-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      removeVerseFromStack(id, parseInt(btn.dataset.idx));
+    btn.addEventListener('click', async () => {
+      const ok = await showConfirm('Remove this verse?', 'Remove');
+      if (ok) removeVerseFromStack(id, parseInt(btn.dataset.idx));
     });
   });
 
@@ -1154,7 +1171,7 @@ function openStackPicker() {
 
   // Position above selection bar
   picker.style.position = 'fixed';
-  picker.style.bottom = '72px';
+  picker.style.bottom = 'max(72px, calc(72px + env(safe-area-inset-bottom)))';
   picker.style.left = '50%';
   picker.style.transform = 'translateX(-50%)';
 
@@ -1238,6 +1255,7 @@ function saveSettings(s) { localStorage.setItem('reader_settings', JSON.stringif
 function applySettings(s) {
   // Theme
   document.body.classList.toggle('theme-dark', s.theme === 'dark');
+  document.querySelector('meta[name="theme-color"]').content = s.theme === 'dark' ? '#0c0c10' : '#e74252';
   // Font
   const font = FONTS.find(f => f.name === s.font) || FONTS[0];
   document.documentElement.style.setProperty('--font-read', font.stack);
