@@ -790,88 +790,82 @@ function renderStackView(id) {
   addInput.addEventListener('keydown', e => { if (e.key === 'Enter') doStackSearch(); });
 
   // ── Long-press drag to reorder ──
-  const cards = verseArea.querySelectorAll('.stack-verse-card');
   let dragCard = null, longPressTimer = null, startY = 0, offsetY = 0, placeholder = null;
 
-  cards.forEach(card => {
-    card.addEventListener('touchstart', e => {
-      // Don't trigger on inputs, buttons, textareas
-      if (e.target.closest('input, button, textarea, a')) return;
-      const touch = e.touches[0];
-      startY = touch.clientY;
-      longPressTimer = setTimeout(() => {
-        dragCard = card;
-        const rect = card.getBoundingClientRect();
-        offsetY = startY - rect.top;
+  verseArea.addEventListener('touchstart', e => {
+    const card = e.target.closest('.stack-verse-card');
+    if (!card || e.target.closest('input, button, textarea, a')) return;
+    const touch = e.touches[0];
+    startY = touch.clientY;
+    longPressTimer = setTimeout(() => {
+      dragCard = card;
+      const rect = card.getBoundingClientRect();
+      offsetY = startY - rect.top;
 
-        // Create placeholder
-        placeholder = document.createElement('div');
-        placeholder.style.cssText = `height:${rect.height}px;border:2px dashed var(--border2);border-radius:14px;margin-bottom:14px;`;
-        card.parentNode.insertBefore(placeholder, card);
+      placeholder = document.createElement('div');
+      placeholder.style.cssText = `height:${rect.height}px;border:2px dashed var(--border2);border-radius:14px;margin-bottom:14px;`;
+      card.parentNode.insertBefore(placeholder, card);
 
-        // Float the card
-        card.style.cssText += `position:fixed;top:${rect.top}px;left:${rect.left}px;width:${rect.width}px;z-index:100;opacity:0.9;box-shadow:0 8px 30px rgba(0,0,0,0.18);transition:none;pointer-events:none;`;
-        navigator.vibrate?.(30);
-      }, 500);
-    }, { passive: true });
+      card.style.position = 'fixed';
+      card.style.top = rect.top + 'px';
+      card.style.left = rect.left + 'px';
+      card.style.width = rect.width + 'px';
+      card.style.zIndex = '100';
+      card.style.opacity = '0.9';
+      card.style.boxShadow = '0 8px 30px rgba(0,0,0,0.18)';
+      card.style.transition = 'none';
+    }, 500);
+  }, { passive: true });
 
-    card.addEventListener('touchmove', e => {
-      if (!dragCard) {
-        // Cancel long press if finger moves before it triggers
-        if (longPressTimer && Math.abs(e.touches[0].clientY - startY) > 10) {
-          clearTimeout(longPressTimer);
-          longPressTimer = null;
-        }
+  verseArea.addEventListener('touchmove', e => {
+    if (!dragCard) {
+      if (longPressTimer && Math.abs(e.touches[0].clientY - startY) > 10) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+      return;
+    }
+    e.preventDefault();
+    const y = e.touches[0].clientY;
+    dragCard.style.top = (y - offsetY) + 'px';
+
+    const siblings = [...verseArea.querySelectorAll('.stack-verse-card')].filter(c => c !== dragCard);
+    for (const sib of siblings) {
+      const r = sib.getBoundingClientRect();
+      if (y < r.top + r.height / 2) {
+        sib.parentNode.insertBefore(placeholder, sib);
         return;
       }
-      e.preventDefault();
-      const y = e.touches[0].clientY;
-      dragCard.style.top = (y - offsetY) + 'px';
+    }
+    if (siblings.length) siblings[siblings.length - 1].parentNode.insertBefore(placeholder, siblings[siblings.length - 1].nextSibling);
+  }, { passive: false });
 
-      // Find which card we're over and move placeholder
-      const siblings = [...verseArea.querySelectorAll('.stack-verse-card:not([style*="fixed"])')];
-      for (const sib of siblings) {
-        const r = sib.getBoundingClientRect();
-        if (y < r.top + r.height / 2) {
-          sib.parentNode.insertBefore(placeholder, sib);
-          return;
-        }
-      }
-      if (siblings.length) siblings[siblings.length - 1].parentNode.insertBefore(placeholder, siblings[siblings.length - 1].nextSibling);
-    }, { passive: false });
+  function endDrag() {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+    if (!dragCard) return;
 
-    card.addEventListener('touchend', () => {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-      if (!dragCard) return;
+    placeholder.parentNode.insertBefore(dragCard, placeholder);
+    placeholder.remove();
+    dragCard.style.cssText = '';
 
-      // Insert card where placeholder is
-      placeholder.parentNode.insertBefore(dragCard, placeholder);
-      placeholder.remove();
-      dragCard.style.cssText = '';
+    const newOrder = [...verseArea.querySelectorAll('.stack-verse-card')].map(c => parseInt(c.dataset.idx));
+    const stacks = loadStacks();
+    const st = stacks.find(s => s.id === id);
+    if (st) {
+      const reordered = newOrder.map(i => st.verses[i]);
+      st.verses = reordered;
+      saveStacks(stacks);
+      renderStackView(id);
+    }
+    dragCard = null;
+  }
 
-      // Read new order and save
-      const newOrder = [...verseArea.querySelectorAll('.stack-verse-card')].map(c => parseInt(c.dataset.idx));
-      const stacks = loadStacks();
-      const st = stacks.find(s => s.id === id);
-      if (st) {
-        const reordered = newOrder.map(i => st.verses[i]);
-        st.verses = reordered;
-        saveStacks(stacks);
-        renderStackView(id);
-      }
-      dragCard = null;
-    });
-
-    card.addEventListener('touchcancel', () => {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-      if (dragCard) {
-        placeholder?.remove();
-        dragCard.style.cssText = '';
-        dragCard = null;
-      }
-    });
+  verseArea.addEventListener('touchend', endDrag);
+  verseArea.addEventListener('touchcancel', () => {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+    if (dragCard) { placeholder?.remove(); dragCard.style.cssText = ''; dragCard = null; }
   });
 }
 

@@ -579,8 +579,7 @@ body.theme-dark {
   .stack-passage-ref-label { font-size: 0.75rem; }
   .remove-verse-btn { font-size: 1.3rem; padding: 4px 6px; }
   .remove-passage-btn { font-size: 1rem; padding: 4px 6px; }
-  .add-passage-btn { font-size: 0.82rem; padding: 4px 0 2px; }
-  .note-toggle { font-size: 0.82rem; padding: 0 0 4px; }
+  .add-passage-btn, .note-toggle { font-size: 0.75rem; padding: 2px 0 0; display: inline-block; margin-right: 14px; }
   .stack-note { font-size: 0.95rem; padding: 12px 14px; min-height: 80px; }
   .stack-add-input { font-size: 1rem; padding: 12px 16px; }
   .stack-add-search-btn { font-size: 0.95rem; padding: 12px 20px; }
