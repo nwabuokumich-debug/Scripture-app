@@ -35,7 +35,7 @@ const appEl = document.querySelector('.app');
 
 const backdrop = document.createElement('div');
 backdrop.className = 'sidebar-backdrop';
-document.body.appendChild(backdrop);
+appEl.appendChild(backdrop);
 
 function openSidebar()  { appEl.classList.add('sidebar-open'); appEl.classList.remove('sidebar-hidden'); }
 function closeSidebar() { appEl.classList.remove('sidebar-open'); appEl.classList.add('sidebar-hidden'); }
