@@ -627,7 +627,7 @@ function renderStackView(id) {
             ${passages.length > 1 ? `<div class="stack-passage-label"><span class="stack-passage-ref-label">${escHtml(p.ref)}</span>${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}</div>` : ''}
             <div class="stack-verse-text">${escHtml(p.text)}</div>`).join('');
       html += `
-        <div class="stack-verse-card">
+        <div class="stack-verse-card" data-idx="${idx}">
           <div class="stack-verse-card-header">
             <span class="stack-verse-ref">${escHtml(cardRef)}</span>
             <button class="remove-verse-btn" data-idx="${idx}" title="Remove card">×</button>
@@ -788,6 +788,91 @@ function renderStackView(id) {
 
   addBtn.addEventListener('click', doStackSearch);
   addInput.addEventListener('keydown', e => { if (e.key === 'Enter') doStackSearch(); });
+
+  // ── Long-press drag to reorder ──
+  const cards = verseArea.querySelectorAll('.stack-verse-card');
+  let dragCard = null, longPressTimer = null, startY = 0, offsetY = 0, placeholder = null;
+
+  cards.forEach(card => {
+    card.addEventListener('touchstart', e => {
+      // Don't trigger on inputs, buttons, textareas
+      if (e.target.closest('input, button, textarea, a')) return;
+      const touch = e.touches[0];
+      startY = touch.clientY;
+      longPressTimer = setTimeout(() => {
+        dragCard = card;
+        const rect = card.getBoundingClientRect();
+        offsetY = startY - rect.top;
+
+        // Create placeholder
+        placeholder = document.createElement('div');
+        placeholder.style.cssText = `height:${rect.height}px;border:2px dashed var(--border2);border-radius:14px;margin-bottom:14px;`;
+        card.parentNode.insertBefore(placeholder, card);
+
+        // Float the card
+        card.style.cssText += `position:fixed;top:${rect.top}px;left:${rect.left}px;width:${rect.width}px;z-index:100;opacity:0.9;box-shadow:0 8px 30px rgba(0,0,0,0.18);transition:none;pointer-events:none;`;
+        navigator.vibrate?.(30);
+      }, 500);
+    }, { passive: true });
+
+    card.addEventListener('touchmove', e => {
+      if (!dragCard) {
+        // Cancel long press if finger moves before it triggers
+        if (longPressTimer && Math.abs(e.touches[0].clientY - startY) > 10) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+        return;
+      }
+      e.preventDefault();
+      const y = e.touches[0].clientY;
+      dragCard.style.top = (y - offsetY) + 'px';
+
+      // Find which card we're over and move placeholder
+      const siblings = [...verseArea.querySelectorAll('.stack-verse-card:not([style*="fixed"])')];
+      for (const sib of siblings) {
+        const r = sib.getBoundingClientRect();
+        if (y < r.top + r.height / 2) {
+          sib.parentNode.insertBefore(placeholder, sib);
+          return;
+        }
+      }
+      if (siblings.length) siblings[siblings.length - 1].parentNode.insertBefore(placeholder, siblings[siblings.length - 1].nextSibling);
+    }, { passive: false });
+
+    card.addEventListener('touchend', () => {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+      if (!dragCard) return;
+
+      // Insert card where placeholder is
+      placeholder.parentNode.insertBefore(dragCard, placeholder);
+      placeholder.remove();
+      dragCard.style.cssText = '';
+
+      // Read new order and save
+      const newOrder = [...verseArea.querySelectorAll('.stack-verse-card')].map(c => parseInt(c.dataset.idx));
+      const stacks = loadStacks();
+      const st = stacks.find(s => s.id === id);
+      if (st) {
+        const reordered = newOrder.map(i => st.verses[i]);
+        st.verses = reordered;
+        saveStacks(stacks);
+        renderStackView(id);
+      }
+      dragCard = null;
+    });
+
+    card.addEventListener('touchcancel', () => {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+      if (dragCard) {
+        placeholder?.remove();
+        dragCard.style.cssText = '';
+        dragCard = null;
+      }
+    });
+  });
 }
 
 // ── Welcome when no stacks ────────────────────────────
