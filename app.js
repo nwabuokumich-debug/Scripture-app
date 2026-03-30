@@ -877,10 +877,12 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
   renderStackView(stackId);
 }
 
-// ── Drag-to-reorder (single global listener set) ─────
+// ── Drag-to-reorder (transform-based, smooth) ────────
 {
-  let dragCard = null, longPressTimer = null, startY = 0, offsetY = 0;
-  let placeholder = null, scrollInterval = null, isDragging = false;
+  let dragEl = null, longPressTimer = null, startY = 0, currentY = 0;
+  let isDragging = false, scrollInterval = null;
+  let cards = [], cardRects = [], dragIndex = -1, currentIndex = -1;
+  let dragStartRect = null, containerTop = 0;
 
   verseArea.addEventListener('touchstart', e => {
     if (isDragging) return;
@@ -889,29 +891,31 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     if (appMode !== 'stacks' || !activeStackId) return;
     const touch = e.touches[0];
     startY = touch.clientY;
+    currentY = startY;
+
     longPressTimer = setTimeout(() => {
       isDragging = true;
-      dragCard = card;
-      const rect = card.getBoundingClientRect();
-      offsetY = startY - rect.top;
-
-      // Prevent text selection during drag
+      dragEl = card;
       document.body.classList.add('is-dragging');
       window.getSelection()?.removeAllRanges();
 
-      placeholder = document.createElement('div');
-      placeholder.className = 'drag-placeholder';
-      placeholder.style.height = rect.height + 'px';
-      card.parentNode.insertBefore(placeholder, card);
+      // Snapshot all card positions before anything moves
+      cards = [...verseArea.querySelectorAll('.stack-verse-card')];
+      dragIndex = cards.indexOf(card);
+      currentIndex = dragIndex;
+      containerTop = verseArea.getBoundingClientRect().top - verseArea.scrollTop;
+      cardRects = cards.map(c => {
+        const r = c.getBoundingClientRect();
+        return { top: r.top - containerTop + verseArea.scrollTop, height: r.height, bottom: r.bottom - containerTop + verseArea.scrollTop };
+      });
+      dragStartRect = cardRects[dragIndex];
 
+      // Lift the dragged card
       card.classList.add('dragging');
-      card.style.top = rect.top + 'px';
-      card.style.left = rect.left + 'px';
-      card.style.width = rect.width + 'px';
 
-      verseArea.querySelectorAll('.stack-verse-card:not(.dragging)').forEach(c => {
-        c.style.transition = 'transform 0.25s ease, opacity 0.2s';
-        c.style.opacity = '0.6';
+      // Set non-dragged cards to transition smoothly
+      cards.forEach((c, i) => {
+        if (i !== dragIndex) c.style.transition = 'transform 0.3s cubic-bezier(0.2, 0, 0, 1)';
       });
 
       navigator.vibrate?.(20);
@@ -927,103 +931,117 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
       return;
     }
     e.preventDefault();
-    const y = e.touches[0].clientY;
-    dragCard.style.top = (y - offsetY) + 'px';
+    currentY = e.touches[0].clientY;
+    const deltaY = currentY - startY;
 
+    // Move the dragged card with finger
+    dragEl.style.transform = `translateY(${deltaY}px) scale(1.03)`;
+
+    // Auto-scroll near edges
     clearInterval(scrollInterval);
     const areaRect = verseArea.getBoundingClientRect();
     const edgeZone = 60;
-    if (y < areaRect.top + edgeZone) {
-      scrollInterval = setInterval(() => verseArea.scrollTop -= 8, 16);
-    } else if (y > areaRect.bottom - edgeZone) {
-      scrollInterval = setInterval(() => verseArea.scrollTop += 8, 16);
+    if (currentY < areaRect.top + edgeZone) {
+      scrollInterval = setInterval(() => { verseArea.scrollTop -= 6; }, 16);
+    } else if (currentY > areaRect.bottom - edgeZone) {
+      scrollInterval = setInterval(() => { verseArea.scrollTop += 6; }, 16);
     }
 
-    const siblings = [...verseArea.querySelectorAll('.stack-verse-card:not(.dragging)')];
-    let inserted = false;
-    for (const sib of siblings) {
-      const r = sib.getBoundingClientRect();
-      if (y < r.top + r.height / 2) {
-        if (placeholder.nextElementSibling !== sib) {
-          sib.parentNode.insertBefore(placeholder, sib);
-        }
-        inserted = true;
-        break;
-      }
+    // Figure out where the card center is now relative to original positions
+    const dragCenterY = dragStartRect.top + dragStartRect.height / 2 + deltaY;
+
+    // Determine target index
+    let newIndex = dragIndex;
+    for (let i = 0; i < cardRects.length; i++) {
+      if (i === dragIndex) continue;
+      const midY = cardRects[i].top + cardRects[i].height / 2;
+      if (dragIndex < i && dragCenterY > midY) newIndex = i;
+      if (dragIndex > i && dragCenterY < midY) newIndex = Math.min(newIndex, i);
     }
-    if (!inserted && siblings.length) {
-      const last = siblings[siblings.length - 1];
-      if (placeholder !== last.nextElementSibling) {
-        last.parentNode.insertBefore(placeholder, last.nextSibling);
-      }
+
+    if (newIndex !== currentIndex) {
+      currentIndex = newIndex;
+      // Shift other cards to make room
+      cards.forEach((c, i) => {
+        if (i === dragIndex) return;
+        let shift = 0;
+        if (dragIndex < currentIndex) {
+          // Dragged down: cards between old and new move up
+          if (i > dragIndex && i <= currentIndex) {
+            shift = -(dragStartRect.height + 14); // 14 = margin-bottom
+          }
+        } else {
+          // Dragged up: cards between new and old move down
+          if (i >= currentIndex && i < dragIndex) {
+            shift = dragStartRect.height + 14;
+          }
+        }
+        c.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
     }
   }, { passive: false });
 
-  function cancelDrag() {
+  function cleanup() {
     clearTimeout(longPressTimer);
     clearInterval(scrollInterval);
     longPressTimer = null;
-    if (!isDragging) return;
+    scrollInterval = null;
     document.body.classList.remove('is-dragging');
-    placeholder?.remove();
-    dragCard.classList.remove('dragging');
-    dragCard.removeAttribute('style');
-    verseArea.querySelectorAll('.stack-verse-card').forEach(c => {
-      c.style.opacity = '';
-      c.style.transition = '';
-      c.style.transform = '';
-    });
-    dragCard = null;
+  }
+
+  function cancelDrag() {
+    cleanup();
+    if (!isDragging) return;
+    dragEl.classList.remove('dragging');
+    dragEl.style.transition = 'transform 0.3s cubic-bezier(0.2, 0, 0, 1)';
+    dragEl.style.transform = '';
+    cards.forEach(c => { c.style.transform = ''; });
+    setTimeout(() => {
+      cards.forEach(c => { c.style.transition = ''; });
+      dragEl = null;
+      isDragging = false;
+    }, 300);
     isDragging = false;
   }
 
   function endDrag() {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
-    clearInterval(scrollInterval);
-    scrollInterval = null;
-    if (!isDragging || !dragCard) { isDragging = false; document.body.classList.remove('is-dragging'); return; }
+    cleanup();
+    if (!isDragging || !dragEl) { isDragging = false; return; }
 
-    const phRect = placeholder.getBoundingClientRect();
-    dragCard.style.transition = 'top 0.25s ease, box-shadow 0.25s ease';
-    dragCard.style.top = phRect.top + 'px';
-    dragCard.style.boxShadow = 'none';
+    // Calculate where the card needs to animate to
+    const targetRect = cardRects[currentIndex];
+    const snapY = targetRect.top - dragStartRect.top;
+    dragEl.style.transition = 'transform 0.3s cubic-bezier(0.2, 0, 0, 1)';
+    dragEl.style.transform = `translateY(${snapY}px) scale(1)`;
 
-    verseArea.querySelectorAll('.stack-verse-card:not(.dragging)').forEach(c => {
-      c.style.opacity = '';
-      c.style.transition = '';
-      c.style.transform = '';
-    });
-
-    const finishCard = dragCard;
-    const finishPlaceholder = placeholder;
     const finishStackId = activeStackId;
-    dragCard = null;
-    isDragging = false;
-    document.body.classList.remove('is-dragging');
+    const fromIdx = dragIndex;
+    const toIdx = currentIndex;
 
     setTimeout(() => {
-      if (!finishPlaceholder.parentNode) return;
-      finishPlaceholder.parentNode.insertBefore(finishCard, finishPlaceholder);
-      finishPlaceholder.remove();
-      finishCard.classList.remove('dragging');
-      finishCard.removeAttribute('style');
+      // Clear all inline styles
+      cards.forEach(c => { c.style.transform = ''; c.style.transition = ''; });
+      if (dragEl) {
+        dragEl.classList.remove('dragging');
+        dragEl.style.transform = '';
+        dragEl.style.transition = '';
+      }
 
-      const newOrder = [...verseArea.querySelectorAll('.stack-verse-card')].map(c => parseInt(c.dataset.idx));
-      const stacks = loadStacks();
-      const st = stacks.find(s => s.id === finishStackId);
-      if (st) {
-        // Validate indices before saving — every index must be valid and unique
-        const valid = newOrder.length === st.verses.length
-          && newOrder.every(i => Number.isInteger(i) && i >= 0 && i < st.verses.length)
-          && new Set(newOrder).size === newOrder.length;
-        if (valid) {
-          st.verses = newOrder.map(i => st.verses[i]);
+      // Save if order changed
+      if (fromIdx !== toIdx) {
+        const stacks = loadStacks();
+        const st = stacks.find(s => s.id === finishStackId);
+        if (st && fromIdx < st.verses.length && toIdx < st.verses.length) {
+          const [moved] = st.verses.splice(fromIdx, 1);
+          st.verses.splice(toIdx, 0, moved);
           saveStacks(stacks);
         }
         renderStackView(finishStackId);
       }
-    }, 250);
+
+      dragEl = null;
+      isDragging = false;
+    }, 300);
   }
 
   verseArea.addEventListener('touchend', endDrag);
