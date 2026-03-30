@@ -44,6 +44,16 @@ document.getElementById('sidebar-close').addEventListener('click', closeSidebar)
 document.getElementById('sidebar-open').addEventListener('click', openSidebar);
 backdrop.addEventListener('click', closeSidebar);
 
+// Close sidebar when tapping anywhere outside it
+document.addEventListener('click', function(e) {
+  if (!appEl.classList.contains('sidebar-open')) return;
+  const sidebar = document.querySelector('.sidebar');
+  const openBtn = document.getElementById('sidebar-open');
+  if (!sidebar.contains(e.target) && !openBtn.contains(e.target)) {
+    closeSidebar();
+  }
+});
+
 // On mobile, start with sidebar closed
 if (window.innerWidth <= 680) closeSidebar();
 
