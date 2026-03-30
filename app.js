@@ -913,9 +913,12 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
       // Lift the dragged card
       card.classList.add('dragging');
 
-      // Set non-dragged cards to transition smoothly
+      // Set non-dragged cards to transition smoothly and dim them
       cards.forEach((c, i) => {
-        if (i !== dragIndex) c.style.transition = 'transform 0.3s cubic-bezier(0.2, 0, 0, 1)';
+        if (i !== dragIndex) {
+          c.style.transition = 'transform 0.3s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s';
+          c.style.opacity = '0.5';
+        }
       });
 
       navigator.vibrate?.(20);
@@ -995,7 +998,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     dragEl.classList.remove('dragging');
     dragEl.style.transition = 'transform 0.3s cubic-bezier(0.2, 0, 0, 1)';
     dragEl.style.transform = '';
-    cards.forEach(c => { c.style.transform = ''; });
+    cards.forEach(c => { c.style.transform = ''; c.style.opacity = ''; });
     setTimeout(() => {
       cards.forEach(c => { c.style.transition = ''; });
       dragEl = null;
@@ -1020,7 +1023,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
 
     setTimeout(() => {
       // Clear all inline styles
-      cards.forEach(c => { c.style.transform = ''; c.style.transition = ''; });
+      cards.forEach(c => { c.style.transform = ''; c.style.transition = ''; c.style.opacity = ''; });
       if (dragEl) {
         dragEl.classList.remove('dragging');
         dragEl.style.transform = '';
