@@ -514,7 +514,7 @@ body.theme-dark {
     z-index: 300;
     width: 82%; max-width: 300px;
     transform: translateX(-100%);
-    transition: transform 0.35s ease;
+    transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 4px 0 24px rgba(0,0,0,0.15);
   }
   .app.sidebar-hidden .sidebar { display: flex; transform: translateX(-100%); }
@@ -524,7 +524,7 @@ body.theme-dark {
     display: none;
     position: fixed; inset: 0; z-index: 299;
     background: rgba(0,0,0,0.35);
-    transition: opacity 0.35s;
+    transition: opacity 0.5s;
   }
   .app.sidebar-open .sidebar-backdrop { display: block; }
 
