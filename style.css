@@ -216,7 +216,7 @@ header { padding: 10px 24px; border-bottom: 1px solid var(--border); background:
 
 .stack-verse-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; margin-bottom: 14px; transition: border-color 0.15s, transform 0.25s ease, box-shadow 0.25s ease; }
 .stack-verse-card:hover { border-color: var(--border2); }
-.stack-verse-card.dragging { position: fixed; z-index: 100; opacity: 0.95; box-shadow: 0 12px 40px rgba(0,0,0,0.2); transform: scale(1.02); border-color: var(--accent); }
+.stack-verse-card.dragging { position: fixed; z-index: 100; opacity: 0.95; box-shadow: 0 12px 40px rgba(0,0,0,0.2); transform: scale(1.02); border-color: var(--accent); touch-action: none; user-select: none; -webkit-user-select: none; pointer-events: none; }
 .drag-placeholder { border: 2px dashed var(--border2); border-radius: 14px; margin-bottom: 14px; background: var(--accent-dim); transition: height 0.25s ease; }
 .stack-verse-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .stack-verse-ref { font-size: 0.65rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; }
