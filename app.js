@@ -633,12 +633,14 @@ function renderStackView(id) {
             <button class="remove-verse-btn" data-idx="${idx}" title="Remove card">×</button>
           </div>
           ${passagesHtml}
-          <button class="add-passage-btn" data-idx="${idx}">+ Add scripture</button>
+          <div class="stack-card-actions">
+            <button class="add-passage-btn" data-idx="${idx}" title="Add scripture">＋</button>
+            <button class="note-toggle" data-idx="${idx}" title="Note">🗒</button>
+          </div>
           <div class="add-passage-area hidden">
             <input class="add-passage-input" data-cardidx="${idx}" placeholder="Search and press Enter…" autocomplete="off" />
             <div class="add-passage-results"></div>
           </div>
-          <button class="note-toggle" data-idx="${idx}">${hasNote ? '▾ Note' : '▸ Note'}</button>
           <textarea class="stack-note${hasNote ? '' : ' hidden'}" data-idx="${idx}" placeholder="Add a note…">${escHtml(v.note || '')}</textarea>
         </div>
       `;
@@ -666,7 +668,7 @@ function renderStackView(id) {
 
   verseArea.querySelectorAll('.add-passage-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const area = btn.nextElementSibling;
+      const area = btn.closest('.stack-verse-card').querySelector('.add-passage-area');
       area.classList.toggle('hidden');
       if (!area.classList.contains('hidden')) area.querySelector('.add-passage-input').focus();
     });
@@ -732,10 +734,9 @@ function renderStackView(id) {
 
   verseArea.querySelectorAll('.note-toggle').forEach(btn => {
     btn.addEventListener('click', () => {
-      const ta = btn.nextElementSibling;
+      const ta = btn.closest('.stack-verse-card').querySelector('.stack-note');
       const opening = ta.classList.contains('hidden');
       ta.classList.toggle('hidden', !opening);
-      btn.textContent = opening ? '▾ Note' : '▸ Note';
       if (opening) ta.focus();
     });
   });
