@@ -214,8 +214,10 @@ header { padding: 10px 24px; border-bottom: 1px solid var(--border); background:
 .delete-stack-btn:hover { background: rgba(214,53,69,0.06); border-color: var(--red); color: var(--red); }
 .stack-verse-count { font-size: 0.65rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 32px; }
 
-.stack-verse-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; margin-bottom: 14px; transition: border-color 0.15s; }
+.stack-verse-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; margin-bottom: 14px; transition: border-color 0.15s, transform 0.25s ease, box-shadow 0.25s ease; }
 .stack-verse-card:hover { border-color: var(--border2); }
+.stack-verse-card.dragging { position: fixed; z-index: 100; opacity: 0.95; box-shadow: 0 12px 40px rgba(0,0,0,0.2); transform: scale(1.02); border-color: var(--accent); }
+.drag-placeholder { border: 2px dashed var(--border2); border-radius: 14px; margin-bottom: 14px; background: var(--accent-dim); transition: height 0.25s ease; }
 .stack-verse-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .stack-verse-ref { font-size: 0.65rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; }
 .remove-verse-btn { background: none; border: none; color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 0 2px; transition: color 0.12s; opacity: 0.4; }

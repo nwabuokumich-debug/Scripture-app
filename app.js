@@ -791,7 +791,7 @@ function renderStackView(id) {
   addInput.addEventListener('keydown', e => { if (e.key === 'Enter') doStackSearch(); });
 
   // ── Long-press drag to reorder ──
-  let dragCard = null, longPressTimer = null, startY = 0, offsetY = 0, placeholder = null;
+  let dragCard = null, longPressTimer = null, startY = 0, offsetY = 0, placeholder = null, scrollInterval = null;
 
   verseArea.addEventListener('touchstart', e => {
     const card = e.target.closest('.stack-verse-card');
@@ -803,24 +803,31 @@ function renderStackView(id) {
       const rect = card.getBoundingClientRect();
       offsetY = startY - rect.top;
 
+      // Create smooth placeholder
       placeholder = document.createElement('div');
-      placeholder.style.cssText = `height:${rect.height}px;border:2px dashed var(--border2);border-radius:14px;margin-bottom:14px;`;
+      placeholder.className = 'drag-placeholder';
+      placeholder.style.height = rect.height + 'px';
       card.parentNode.insertBefore(placeholder, card);
 
-      card.style.position = 'fixed';
+      // Lift the card
+      card.classList.add('dragging');
       card.style.top = rect.top + 'px';
       card.style.left = rect.left + 'px';
       card.style.width = rect.width + 'px';
-      card.style.zIndex = '100';
-      card.style.opacity = '0.9';
-      card.style.boxShadow = '0 8px 30px rgba(0,0,0,0.18)';
-      card.style.transition = 'none';
-    }, 500);
+
+      // Fade other cards slightly
+      verseArea.querySelectorAll('.stack-verse-card:not(.dragging)').forEach(c => {
+        c.style.transition = 'transform 0.25s ease, opacity 0.2s';
+        c.style.opacity = '0.6';
+      });
+
+      navigator.vibrate?.(20);
+    }, 400);
   }, { passive: true });
 
   verseArea.addEventListener('touchmove', e => {
     if (!dragCard) {
-      if (longPressTimer && Math.abs(e.touches[0].clientY - startY) > 10) {
+      if (longPressTimer && Math.abs(e.touches[0].clientY - startY) > 8) {
         clearTimeout(longPressTimer);
         longPressTimer = null;
       }
@@ -830,43 +837,88 @@ function renderStackView(id) {
     const y = e.touches[0].clientY;
     dragCard.style.top = (y - offsetY) + 'px';
 
-    const siblings = [...verseArea.querySelectorAll('.stack-verse-card')].filter(c => c !== dragCard);
+    // Auto-scroll near edges
+    clearInterval(scrollInterval);
+    const areaRect = verseArea.getBoundingClientRect();
+    const edgeZone = 60;
+    if (y < areaRect.top + edgeZone) {
+      scrollInterval = setInterval(() => verseArea.scrollTop -= 8, 16);
+    } else if (y > areaRect.bottom - edgeZone) {
+      scrollInterval = setInterval(() => verseArea.scrollTop += 8, 16);
+    }
+
+    // Move placeholder smoothly
+    const siblings = [...verseArea.querySelectorAll('.stack-verse-card:not(.dragging)')];
+    let inserted = false;
     for (const sib of siblings) {
       const r = sib.getBoundingClientRect();
       if (y < r.top + r.height / 2) {
-        sib.parentNode.insertBefore(placeholder, sib);
-        return;
+        if (placeholder.nextElementSibling !== sib) {
+          sib.parentNode.insertBefore(placeholder, sib);
+        }
+        inserted = true;
+        break;
       }
     }
-    if (siblings.length) siblings[siblings.length - 1].parentNode.insertBefore(placeholder, siblings[siblings.length - 1].nextSibling);
+    if (!inserted && siblings.length) {
+      const last = siblings[siblings.length - 1];
+      if (placeholder !== last.nextElementSibling) {
+        last.parentNode.insertBefore(placeholder, last.nextSibling);
+      }
+    }
   }, { passive: false });
 
   function endDrag() {
     clearTimeout(longPressTimer);
     longPressTimer = null;
+    clearInterval(scrollInterval);
     if (!dragCard) return;
 
-    placeholder.parentNode.insertBefore(dragCard, placeholder);
-    placeholder.remove();
-    dragCard.style.cssText = '';
+    // Animate card back to placeholder position
+    const phRect = placeholder.getBoundingClientRect();
+    dragCard.style.transition = 'top 0.25s ease, box-shadow 0.25s ease';
+    dragCard.style.top = phRect.top + 'px';
+    dragCard.style.boxShadow = 'none';
 
-    const newOrder = [...verseArea.querySelectorAll('.stack-verse-card')].map(c => parseInt(c.dataset.idx));
-    const stacks = loadStacks();
-    const st = stacks.find(s => s.id === id);
-    if (st) {
-      const reordered = newOrder.map(i => st.verses[i]);
-      st.verses = reordered;
-      saveStacks(stacks);
-      renderStackView(id);
-    }
-    dragCard = null;
+    // Restore other cards
+    verseArea.querySelectorAll('.stack-verse-card:not(.dragging)').forEach(c => {
+      c.style.opacity = '';
+      c.style.transition = '';
+      c.style.transform = '';
+    });
+
+    setTimeout(() => {
+      if (!dragCard) return;
+      placeholder.parentNode.insertBefore(dragCard, placeholder);
+      placeholder.remove();
+      dragCard.classList.remove('dragging');
+      dragCard.removeAttribute('style');
+
+      // Save new order
+      const newOrder = [...verseArea.querySelectorAll('.stack-verse-card')].map(c => parseInt(c.dataset.idx));
+      const stacks = loadStacks();
+      const st = stacks.find(s => s.id === id);
+      if (st) {
+        st.verses = newOrder.map(i => st.verses[i]);
+        saveStacks(stacks);
+        renderStackView(id);
+      }
+      dragCard = null;
+    }, 250);
   }
 
   verseArea.addEventListener('touchend', endDrag);
   verseArea.addEventListener('touchcancel', () => {
     clearTimeout(longPressTimer);
+    clearInterval(scrollInterval);
     longPressTimer = null;
-    if (dragCard) { placeholder?.remove(); dragCard.style.cssText = ''; dragCard = null; }
+    if (dragCard) {
+      placeholder?.remove();
+      dragCard.classList.remove('dragging');
+      dragCard.removeAttribute('style');
+      verseArea.querySelectorAll('.stack-verse-card').forEach(c => { c.style.opacity = ''; c.style.transition = ''; });
+      dragCard = null;
+    }
   });
 }
 
