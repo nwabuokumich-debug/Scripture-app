@@ -220,7 +220,7 @@ header { padding: 10px 24px; border-bottom: 1px solid var(--border); background:
 .stack-verse-ref { font-size: 0.65rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; }
 .remove-verse-btn { background: none; border: none; color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 0 2px; transition: color 0.12s; opacity: 0.4; }
 .remove-verse-btn:hover { color: var(--red); opacity: 1; }
-.stack-verse-text { font-family: var(--font-read); font-size: 1rem; color: var(--text); line-height: 2; margin-bottom: 14px; }
+.stack-verse-text { font-family: var(--font-read); font-size: var(--reader-size, 1.08rem); color: var(--text); line-height: var(--reader-spacing, 2); margin-bottom: 14px; }
 .stack-passage-label { display: flex; align-items: center; gap: 6px; margin-top: 16px; margin-bottom: 2px; }
 .stack-passage-ref-label { font-size: 0.65rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; }
 .remove-passage-btn { background: none; border: none; color: var(--text-muted); font-size: 0.85rem; cursor: pointer; opacity: 0.4; padding: 0 2px; transition: all 0.12s; line-height: 1; }
@@ -575,7 +575,7 @@ body.theme-dark {
   .stack-verse-card { padding: 20px 18px; }
   .stack-verse-count { font-size: 0.75rem; letter-spacing: 1.2px; margin-bottom: 28px; }
   .stack-verse-ref { font-size: 0.78rem; letter-spacing: 1.5px; }
-  .stack-verse-text { font-size: 1.1rem; line-height: 1.9; }
+  .stack-verse-text { font-size: var(--reader-size, 1.1rem); }
   .stack-passage-ref-label { font-size: 0.75rem; }
   .remove-verse-btn { font-size: 1.3rem; padding: 4px 6px; }
   .remove-passage-btn { font-size: 1rem; padding: 4px 6px; }
