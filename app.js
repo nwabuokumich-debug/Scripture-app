@@ -635,7 +635,7 @@ function renderStackView(id) {
           ${passagesHtml}
           <div class="stack-card-actions">
             <button class="add-passage-btn" data-idx="${idx}" title="Add scripture">＋</button>
-            <button class="note-toggle" data-idx="${idx}" title="Note">🗒</button>
+            <button class="note-toggle" data-idx="${idx}" title="Note">✎</button>
           </div>
           <div class="add-passage-area hidden">
             <input class="add-passage-input" data-cardidx="${idx}" placeholder="Search and press Enter…" autocomplete="off" />
