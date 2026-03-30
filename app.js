@@ -895,6 +895,10 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
       const rect = card.getBoundingClientRect();
       offsetY = startY - rect.top;
 
+      // Prevent text selection during drag
+      document.body.classList.add('is-dragging');
+      window.getSelection()?.removeAllRanges();
+
       placeholder = document.createElement('div');
       placeholder.className = 'drag-placeholder';
       placeholder.style.height = rect.height + 'px';
@@ -960,6 +964,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     clearInterval(scrollInterval);
     longPressTimer = null;
     if (!isDragging) return;
+    document.body.classList.remove('is-dragging');
     placeholder?.remove();
     dragCard.classList.remove('dragging');
     dragCard.removeAttribute('style');
@@ -977,7 +982,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     longPressTimer = null;
     clearInterval(scrollInterval);
     scrollInterval = null;
-    if (!isDragging || !dragCard) { isDragging = false; return; }
+    if (!isDragging || !dragCard) { isDragging = false; document.body.classList.remove('is-dragging'); return; }
 
     const phRect = placeholder.getBoundingClientRect();
     dragCard.style.transition = 'top 0.25s ease, box-shadow 0.25s ease';
@@ -995,6 +1000,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     const finishStackId = activeStackId;
     dragCard = null;
     isDragging = false;
+    document.body.classList.remove('is-dragging');
 
     setTimeout(() => {
       if (!finishPlaceholder.parentNode) return;
