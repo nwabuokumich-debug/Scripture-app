@@ -142,8 +142,36 @@ async function init() {
   }
 
   allBooks = data;
+  await migrateOldPassages();
   renderBookList();
   showWelcome();
+}
+
+// ── Migrate old single-blob passages into individual verses ──
+async function migrateOldPassages() {
+  const stacks = loadStacks();
+  let changed = false;
+  for (const stack of stacks) {
+    for (const card of stack.verses) {
+      const passages = card.passages ?? (card.ref ? [{ ref: card.ref, text: card.text }] : []);
+      if (passages.length !== 1) continue;
+      const p = passages[0];
+      const m = p.ref.match(/^(.+?)\s+(\d+):(\d+)[–-](\d+)$/);
+      if (!m) continue;
+      const [, bookName, ch, vStart, vEnd] = m;
+      const book = allBooks.find(b => b.name.toLowerCase() === bookName.toLowerCase());
+      if (!book) continue;
+      const { data } = await supabase
+        .from('verses').select('verse, text')
+        .eq('book_id', book.id).eq('chapter', parseInt(ch))
+        .gte('verse', parseInt(vStart)).lte('verse', parseInt(vEnd))
+        .order('verse');
+      if (!data || data.length <= 1) continue;
+      card.passages = data.map(v => ({ ref: `${book.name} ${ch}:${v.verse}`, text: v.text }));
+      changed = true;
+    }
+  }
+  if (changed) saveStacks(stacks);
 }
 
 // ── Book list ─────────────────────────────────────────
