@@ -639,9 +639,15 @@ function renderStackView(id) {
       const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
       const hasNote = v.note && v.note.trim();
       const cardRef = passages.map(p => p.ref).join(' · ');
-      const passagesHtml = passages.map((p, pi) => `
-            ${passages.length > 1 ? `<div class="stack-passage-label"><span class="stack-passage-ref-label">${escHtml(p.ref)}</span>${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}</div>` : ''}
-            <div class="stack-verse-text">${escHtml(p.text)}</div>`).join('');
+      const passagesHtml = passages.map((p, pi) => {
+            const verseNum = p.ref.match(/:(\d+)/)?.[1] || '';
+            return `
+            <div class="stack-verse-row${passages.length > 1 ? '' : ' single'}">
+              ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
+              <div class="stack-verse-text">${escHtml(p.text)}</div>
+              ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}
+            </div>`;
+      }).join('');
       html += `
         <div class="stack-verse-card" data-idx="${idx}">
           <div class="stack-verse-card-header">
