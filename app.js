@@ -638,7 +638,15 @@ function renderStackView(id) {
     stack.verses.forEach((v, idx) => {
       const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
       const hasNote = v.note && v.note.trim();
-      const cardRef = passages.map(p => p.ref).join(' · ');
+      let cardRef;
+      if (passages.length > 1 && passages.every(p => p.ref.replace(/:\d+$/, '') === passages[0].ref.replace(/:\d+$/, ''))) {
+        const nums = passages.map(p => parseInt(p.ref.match(/:(\d+)$/)?.[1])).filter(n => !isNaN(n));
+        const base = passages[0].ref.replace(/:\d+$/, '');
+        const consecutive = nums.every((n, i) => i === 0 || n === nums[i - 1] + 1);
+        cardRef = consecutive ? `${base}:${nums[0]}–${nums[nums.length - 1]}` : `${base}:${nums.join(', ')}`;
+      } else {
+        cardRef = passages.map(p => p.ref).join(' · ');
+      }
       const passagesHtml = passages.map((p, pi) => {
             const verseNum = p.ref.match(/:(\d+)/)?.[1] || '';
             return `
