@@ -1048,7 +1048,8 @@ function addVerseToStack(stackId, verseData) {
     showToast(`Already in "${stack.title}"`);
     return;
   }
-  stack.verses.push({ passages: [{ ref: verseData.ref, text: verseData.text }], note: '', addedAt: Date.now() });
+  const passages = verseData.passages || [{ ref: verseData.ref, text: verseData.text }];
+  stack.verses.push({ passages, note: '', addedAt: Date.now() });
   saveStacks(stacks);
   showToast(`Added to "${stack.title}"`);
   if (appMode === 'stacks' && activeStackId === stackId) {
@@ -1142,7 +1143,14 @@ function buildCombinedVerseData(verses) {
     ref = sorted.map(v => v.ref).join('; ');
   }
 
-  return { ref, book: sorted[0].book, chapter: sorted[0].chapter, verse: sorted[0].verse, text: sorted.map(v => v.text).join(' ') };
+  return {
+    ref,
+    book: sorted[0].book,
+    chapter: sorted[0].chapter,
+    verse: sorted[0].verse,
+    text: sorted.map(v => v.text).join(' '),
+    passages: sorted.map(v => ({ ref: v.ref, text: v.text }))
+  };
 }
 
 // ── Stack picker popup ────────────────────────────────
