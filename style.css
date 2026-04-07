@@ -258,7 +258,7 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
 .stack-verse-row { display: flex; gap: 0; padding: 2px 0 2px 0; align-items: center; }
 .stack-compare-btn {
   opacity: 0.5; background: none; border: 1px solid var(--border2); color: var(--text-muted);
-  width: 28px; height: 28px; border-radius: 6px; font-size: 0.9rem; line-height: 1;
+  width: 36px; height: 36px; border-radius: 8px; font-size: 1.1rem; line-height: 1;
   cursor: pointer; flex-shrink: 0; transition: opacity 0.12s, color 0.12s;
   display: flex; align-items: center; justify-content: center; margin-left: 6px;
 }
