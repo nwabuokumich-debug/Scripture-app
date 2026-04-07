@@ -332,6 +332,7 @@ function renderVerses(verses) {
         <span class="verse-text">${escHtml(v.text)}</span>
         ${hasGreek ? '<span class="greek-hint">α</span>' : ''}
         <button class="add-btn" data-vnum="${v.verse}" title="Add to a Study Stack">+</button>
+        <button class="compare-btn" data-vnum="${v.verse}" title="Compare translations">⇄</button>
       </div>
     `;
   });
@@ -353,12 +354,57 @@ function renderVerses(verses) {
     });
   });
 
+  verseArea.querySelectorAll('.compare-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const vnum = parseInt(btn.dataset.vnum);
+      openCompare(`${activeBook.name} ${activeChapter}:${vnum}`, activeBook.id, activeChapter, vnum);
+    });
+  });
+
   verseArea.scrollTop = 0;
+}
+
+// ── Compare translations ───────────────────────────────
+const compareBackdrop = document.getElementById('compare-backdrop');
+const compareSheet    = document.getElementById('compare-sheet');
+const compareRef      = document.getElementById('compare-ref');
+const compareBody     = document.getElementById('compare-body');
+document.getElementById('compare-close').addEventListener('click', () => compareBackdrop.classList.add('hidden'));
+compareBackdrop.addEventListener('click', e => { if (e.target === compareBackdrop) compareBackdrop.classList.add('hidden'); });
+
+async function openCompare(ref, bookId, chapter, verse) {
+  compareRef.textContent = ref;
+  compareBody.innerHTML = '<div class="compare-loading"><span class="spinner"></span> Loading…</div>';
+  compareBackdrop.classList.remove('hidden');
+
+  const { data, error } = await supabase
+    .from('verses').select('translation, text')
+    .eq('book_id', bookId).eq('chapter', chapter).eq('verse', verse)
+    .order('translation');
+
+  if (error || !data?.length) {
+    compareBody.innerHTML = '<div class="compare-loading">No data found.</div>';
+    return;
+  }
+
+  // Build a map for quick lookup, then render in TRANSLATIONS order
+  const byTranslation = Object.fromEntries(data.map(r => [r.translation, r.text]));
+  compareBody.innerHTML = Object.entries(TRANSLATIONS).map(([key, label]) => {
+    const text = byTranslation[key];
+    if (!text) return '';
+    return `
+      <div class="compare-row">
+        <div class="compare-label">${label}</div>
+        <div class="compare-text">${escHtml(text)}</div>
+      </div>`;
+  }).join('');
 }
 
 // ── Verse click → Greek page ───────────────────────────
 verseArea.addEventListener('click', e => {
   if (e.target.closest('.add-btn')) return;
+  if (e.target.closest('.compare-btn')) return;
   const row = e.target.closest('.has-greek');
   if (!row) return;
   const verseNum = parseInt(row.dataset.verse);
