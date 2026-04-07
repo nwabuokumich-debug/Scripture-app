@@ -374,13 +374,18 @@ const compareBackdrop = document.getElementById('compare-backdrop');
 const compareSheet    = document.getElementById('compare-sheet');
 const compareRef      = document.getElementById('compare-ref');
 const compareBody     = document.getElementById('compare-body');
-document.getElementById('compare-close').addEventListener('click', () => compareBackdrop.classList.add('hidden'));
-compareBackdrop.addEventListener('click', e => { if (e.target === compareBackdrop) compareBackdrop.classList.add('hidden'); });
+function closeCompare() {
+  compareBackdrop.classList.remove('open');
+  setTimeout(() => compareBackdrop.classList.add('hidden'), 380);
+}
+document.getElementById('compare-close').addEventListener('click', closeCompare);
+compareBackdrop.addEventListener('click', e => { if (e.target === compareBackdrop) closeCompare(); });
 
 async function openCompare(ref, bookId, chapter, verse) {
   compareRef.textContent = ref;
   compareBody.innerHTML = '<div class="compare-loading"><span class="spinner"></span> Loading…</div>';
   compareBackdrop.classList.remove('hidden');
+  requestAnimationFrame(() => compareBackdrop.classList.add('open'));
 
   const { data, error } = await supabase
     .from('verses').select('translation, text')
@@ -1307,6 +1312,7 @@ function updateSelectionBar() {
     bar.id = 'selection-bar';
     bar.className = 'selection-bar';
     document.body.appendChild(bar);
+    requestAnimationFrame(() => bar.classList.add('open'));
   }
   bar.innerHTML = `
     <span class="sel-count">${selectedVerses.length} verse${selectedVerses.length !== 1 ? 's' : ''} selected</span>
