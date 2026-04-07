@@ -1326,13 +1326,18 @@ function updateSelectionBar() {
   bar.querySelector('.sel-clear-btn').addEventListener('click', clearSelection);
 }
 
+function dismissSelectionBar() {
+  const bar = document.getElementById('selection-bar');
+  if (!bar) return;
+  bar.classList.remove('open');
+  setTimeout(() => bar.remove(), 400);
+}
+
 function clearSelection() {
   selectedVerses = [];
   document.querySelectorAll('.verse-row.selected, .result-item.selected').forEach(el => el.classList.remove('selected'));
-  document.querySelectorAll('.verse-row.selected .add-btn, .result-item.selected .add-btn').forEach(btn => btn.textContent = '+');
-  // Reset all add-btn text
   document.querySelectorAll('.add-btn').forEach(btn => btn.textContent = '+');
-  document.getElementById('selection-bar')?.remove();
+  dismissSelectionBar();
 }
 
 // ── Combine selected verses into one card ─────────────
