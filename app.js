@@ -69,20 +69,14 @@ function openTranslationPicker(anchorEl, currentKey, onSelect) {
   closeTranslationPicker();
   const picker = document.createElement('div');
   picker.className = 'translation-picker';
+  picker.style.cssText = ''; // positioning handled by CSS
   picker.innerHTML = `<div class="translation-picker-title">Select Translation</div>` +
     Object.entries(TRANSLATIONS).map(([key, label]) => `
     <div class="translation-picker-item${key === currentKey ? ' active' : ''}" data-key="${key}">${label}</div>
   `).join('');
   document.body.appendChild(picker);
   activeTranslationPicker = picker;
-
-  // Center horizontally, position above bottom
-  picker.style.position = 'fixed';
-  picker.style.left = '50%';
-  picker.style.transform = 'translateX(-50%)';
-  picker.style.bottom = 'max(24px, calc(24px + env(safe-area-inset-bottom)))';
-  picker.style.maxHeight = '60vh';
-  picker.style.overflowY = 'auto';
+  requestAnimationFrame(() => picker.classList.add('open'));
 
   picker.querySelectorAll('.translation-picker-item').forEach(item => {
     item.addEventListener('click', e => {
@@ -96,8 +90,11 @@ function openTranslationPicker(anchorEl, currentKey, onSelect) {
 }
 
 function closeTranslationPicker() {
-  activeTranslationPicker?.remove();
+  if (!activeTranslationPicker) return;
+  const picker = activeTranslationPicker;
   activeTranslationPicker = null;
+  picker.classList.remove('open');
+  setTimeout(() => picker.remove(), 380);
 }
 
 const translationLabel = document.getElementById('translation-label');
