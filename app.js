@@ -60,18 +60,53 @@ document.addEventListener('click', function(e) {
 // On mobile, start with sidebar closed
 if (window.innerWidth <= 680) closeSidebar();
 
-// ── Translation switcher ─────────────────────────────
+// ── Translation picker ────────────────────────────────
+let activeTranslationPicker = null;
+
+function openTranslationPicker(anchorEl, currentKey, onSelect) {
+  closeTranslationPicker();
+  const picker = document.createElement('div');
+  picker.className = 'translation-picker';
+  picker.innerHTML = Object.entries(TRANSLATIONS).map(([key, label]) => `
+    <div class="translation-picker-item${key === currentKey ? ' active' : ''}" data-key="${key}">${label}</div>
+  `).join('');
+  document.body.appendChild(picker);
+  activeTranslationPicker = picker;
+
+  // Position near anchor
+  const rect = anchorEl.getBoundingClientRect();
+  picker.style.position = 'fixed';
+  picker.style.left = `${rect.left}px`;
+  picker.style.top = `${rect.bottom + 6}px`;
+
+  picker.querySelectorAll('.translation-picker-item').forEach(item => {
+    item.addEventListener('click', e => {
+      e.stopPropagation();
+      onSelect(item.dataset.key);
+      closeTranslationPicker();
+    });
+  });
+
+  setTimeout(() => document.addEventListener('click', closeTranslationPicker, { once: true }), 0);
+}
+
+function closeTranslationPicker() {
+  activeTranslationPicker?.remove();
+  activeTranslationPicker = null;
+}
+
 const translationLabel = document.getElementById('translation-label');
 translationLabel.textContent = TRANSLATIONS[activeTranslation] || activeTranslation.toUpperCase();
-translationLabel.addEventListener('click', () => {
-  const keys = Object.keys(TRANSLATIONS);
-  const idx = keys.indexOf(activeTranslation);
-  activeTranslation = keys[(idx + 1) % keys.length];
-  localStorage.setItem('active_translation', activeTranslation);
-  translationLabel.textContent = TRANSLATIONS[activeTranslation];
-  document.title = `Scripture Search — ${TRANSLATIONS[activeTranslation]} Bible`;
-  if (activeBook && activeChapter) loadChapter(activeChapter);
-  else if (appMode === 'bible') showWelcome();
+translationLabel.addEventListener('click', e => {
+  e.stopPropagation();
+  openTranslationPicker(translationLabel, activeTranslation, key => {
+    activeTranslation = key;
+    localStorage.setItem('active_translation', key);
+    translationLabel.textContent = TRANSLATIONS[key];
+    document.title = `Scripture Search — ${TRANSLATIONS[key]} Bible`;
+    if (activeBook && activeChapter) loadChapter(activeChapter);
+    else if (appMode === 'bible') showWelcome();
+  });
 });
 
 // ── Helpers ───────────────────────────────────────────
@@ -828,11 +863,11 @@ function renderStackView(id) {
   });
 
   verseArea.querySelectorAll('.card-translation-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
       const idx = parseInt(btn.dataset.idx);
       const current = cardTranslations.get(idx) || 'kjv';
-      const keys = Object.keys(TRANSLATIONS);
-      const next = keys[(keys.indexOf(current) + 1) % keys.length];
+      openTranslationPicker(btn, current, async next => {
       cardTranslations.set(idx, next);
       btn.textContent = TRANSLATIONS[next];
       btn.disabled = true;
@@ -863,6 +898,7 @@ function renderStackView(id) {
         if (textEl) textEl.textContent = p.text;
       });
       btn.disabled = false;
+      }); // end openTranslationPicker callback
     });
   });
 
