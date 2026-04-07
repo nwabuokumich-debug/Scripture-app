@@ -30,7 +30,7 @@ let activeStackId   = null;
 let activePicker    = null;
 let selectedVerses  = [];
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
-const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', ylt: 'YLT' };
+const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', oeb: 'OEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
 const cardTranslations = new Map(); // idx → translation override for stack cards
 
 // ── Sidebar toggle ────────────────────────────────────
