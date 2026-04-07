@@ -333,8 +333,10 @@ function renderVerses(verses) {
         <span class="verse-num">${v.verse}</span>
         <span class="verse-text">${escHtml(v.text)}</span>
         ${hasGreek ? '<span class="greek-hint">α</span>' : ''}
-        <button class="add-btn" data-vnum="${v.verse}" title="Add to a Study Stack">+</button>
-        <button class="compare-btn" data-vnum="${v.verse}" title="Compare translations">⇄</button>
+        <div class="verse-btns">
+          <button class="compare-btn" data-vnum="${v.verse}" title="Compare translations">≡</button>
+          <button class="add-btn" data-vnum="${v.verse}" title="Add to a Study Stack">+</button>
+        </div>
       </div>
     `;
   });

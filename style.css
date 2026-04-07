@@ -166,19 +166,22 @@ header { padding: max(10px, env(safe-area-inset-top)) 24px 10px; border-bottom: 
 .verse-num { font-family: var(--font-ui); font-size: 0.55rem; font-weight: 700; color: var(--accent); min-width: 0; vertical-align: super; user-select: none; opacity: 0.6; margin-right: 4px; padding-top: 2px; flex-shrink: 0; }
 .verse-text { font-family: var(--font-read); font-size: var(--reader-size, 1.08rem); color: var(--text); line-height: var(--reader-spacing, 2.1); flex: 1; }
 
+.verse-btns {
+  display: flex; flex-direction: column; gap: 4px; align-self: center; flex-shrink: 0; margin-left: 6px;
+}
 .add-btn {
   opacity: 0; background: none; border: 1px solid var(--border2); color: var(--text-muted);
   width: 20px; height: 20px; border-radius: 4px; font-size: 0.8rem; line-height: 1;
   cursor: pointer; flex-shrink: 0; transition: opacity 0.12s, color 0.12s;
-  display: flex; align-items: center; justify-content: center; align-self: center;
+  display: flex; align-items: center; justify-content: center;
 }
 .add-btn:hover { color: var(--accent); border-color: var(--accent); }
 .result-item:hover .add-btn { opacity: 1; }
 .compare-btn {
   opacity: 0; background: none; border: 1px solid var(--border2); color: var(--text-muted);
-  width: 20px; height: 20px; border-radius: 4px; font-size: 0.7rem; line-height: 1;
+  width: 20px; height: 20px; border-radius: 4px; font-size: 0.9rem; line-height: 1;
   cursor: pointer; flex-shrink: 0; transition: opacity 0.12s, color 0.12s;
-  display: flex; align-items: center; justify-content: center; align-self: center; margin-left: 4px;
+  display: flex; align-items: center; justify-content: center;
 }
 .compare-btn:hover { color: var(--accent); border-color: var(--accent); }
 .verse-row:hover .compare-btn { opacity: 1; }
@@ -606,8 +609,10 @@ body.theme-dark {
   .verse-num { font-size: 0.62rem; }
   .verse-text { font-size: var(--reader-size, 1.08rem); }
 
-  /* ── Always show add-btn on mobile (no hover) ── */
+  /* ── Always show buttons on mobile (no hover) ── */
   .add-btn { opacity: 0.5; width: 32px; height: 32px; font-size: 1.1rem; border-radius: 8px; }
+  .compare-btn { opacity: 0.5; width: 32px; height: 32px; font-size: 1.1rem; border-radius: 8px; }
+  .verse-btns { gap: 6px; }
 
   /* ── Greek page ── */
   .gp-scroll { padding: 20px 16px 80px; }
