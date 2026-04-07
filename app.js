@@ -29,6 +29,8 @@ let appMode         = 'bible';
 let activeStackId   = null;
 let activePicker    = null;
 let selectedVerses  = [];
+let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
+const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB' };
 
 // ── Sidebar toggle ────────────────────────────────────
 const appEl = document.querySelector('.app');
@@ -56,6 +58,20 @@ document.addEventListener('click', function(e) {
 
 // On mobile, start with sidebar closed
 if (window.innerWidth <= 680) closeSidebar();
+
+// ── Translation switcher ─────────────────────────────
+const translationLabel = document.getElementById('translation-label');
+translationLabel.textContent = TRANSLATIONS[activeTranslation] || activeTranslation.toUpperCase();
+translationLabel.addEventListener('click', () => {
+  const keys = Object.keys(TRANSLATIONS);
+  const idx = keys.indexOf(activeTranslation);
+  activeTranslation = keys[(idx + 1) % keys.length];
+  localStorage.setItem('active_translation', activeTranslation);
+  translationLabel.textContent = TRANSLATIONS[activeTranslation];
+  document.title = `Scripture Search — ${TRANSLATIONS[activeTranslation]} Bible`;
+  if (activeBook && activeChapter) loadChapter(activeChapter);
+  else if (appMode === 'bible') showWelcome();
+});
 
 // ── Helpers ───────────────────────────────────────────
 function escHtml(str) {
@@ -163,7 +179,7 @@ async function migrateOldPassages() {
       if (!book) continue;
       const { data } = await supabase
         .from('verses').select('verse, text')
-        .eq('book_id', book.id).eq('chapter', parseInt(ch))
+        .eq('book_id', book.id).eq('chapter', parseInt(ch)).eq('translation', 'kjv')
         .gte('verse', parseInt(vStart)).lte('verse', parseInt(vEnd))
         .order('verse');
       if (!data || data.length <= 1) continue;
@@ -198,6 +214,7 @@ async function selectBook(book) {
     .from('verses')
     .select('chapter')
     .eq('book_id', book.id)
+    .eq('translation', activeTranslation)
     .order('chapter', { ascending: false })
     .limit(1);
 
@@ -233,6 +250,7 @@ async function selectChapter(num) {
     .select('verse, text')
     .eq('book_id', activeBook.id)
     .eq('chapter', num)
+    .eq('translation', activeTranslation)
     .order('verse');
 
   if (error || !data?.length) {
@@ -402,7 +420,7 @@ async function doSearch() {
 
     const { data, error } = await supabase
       .from('verses').select('verse, text')
-      .eq('book_id', ref.book.id).eq('chapter', ref.chapter).order('verse');
+      .eq('book_id', ref.book.id).eq('chapter', ref.chapter).eq('translation', activeTranslation).order('verse');
     if (error || !data?.length) {
       verseArea.innerHTML = `<div class="state-msg">No verses found.</div>`;
       return;
@@ -448,6 +466,7 @@ async function doSearch() {
   const { data, error } = await supabase
     .from('verses')
     .select('verse, chapter, text, book_id, books(name)')
+    .eq('translation', activeTranslation)
     .ilike('text', `%${query}%`)
     .limit(100);
 
@@ -752,7 +771,7 @@ function renderStackView(id) {
       if (ref && ref.chapter) {
         const { data, error } = await supabase
           .from('verses').select('verse, text')
-          .eq('book_id', ref.book.id).eq('chapter', ref.chapter).order('verse');
+          .eq('book_id', ref.book.id).eq('chapter', ref.chapter).eq('translation', activeTranslation).order('verse');
         if (error || !data?.length) { resultsEl.innerHTML = `<div class="add-passage-loading">No results.</div>`; return; }
         const verses = ref.verseStart
           ? data.filter(v => v.verse >= ref.verseStart && v.verse <= (ref.verseEnd ?? ref.verseStart))
@@ -773,7 +792,7 @@ function renderStackView(id) {
 
       const { data, error } = await supabase
         .from('verses').select('verse, chapter, text, book_id, books(name)')
-        .ilike('text', `%${q}%`).limit(20);
+        .eq('translation', activeTranslation).ilike('text', `%${q}%`).limit(20);
       if (error || !data?.length) { resultsEl.innerHTML = `<div class="add-passage-loading">No results.</div>`; return; }
       resultsEl.innerHTML = data.map((rv, i) => `
         <div class="add-passage-result-row" data-idx="${i}">
@@ -817,6 +836,7 @@ function renderStackView(id) {
     const { data, error } = await supabase
       .from('verses')
       .select('verse, chapter, text, book_id, books(name)')
+      .eq('translation', activeTranslation)
       .ilike('text', `%${q}%`)
       .limit(30);
     if (error || !data?.length) {
