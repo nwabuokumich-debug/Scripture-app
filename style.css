@@ -241,6 +241,9 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
 .stack-card-actions { display: flex; gap: 8px; margin-top: 4px; }
 .add-passage-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 1; transition: all 0.12s; }
 .add-passage-btn:hover { color: var(--accent); border-color: var(--accent); }
+.card-translation-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); font-family: var(--font-ui); font-size: 0.65rem; font-weight: 700; cursor: pointer; padding: 4px 8px; border-radius: 6px; letter-spacing: 0.5px; transition: all 0.12s; margin-left: auto; }
+.card-translation-btn:hover { color: var(--accent); border-color: var(--accent); }
+.card-translation-btn:disabled { opacity: 0.5; cursor: default; }
 .add-passage-area { margin-bottom: 6px; }
 .add-passage-input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--font-ui); font-size: 0.83rem; padding: 7px 12px; outline: none; transition: border-color 0.2s; }
 .add-passage-input:focus { border-color: var(--accent); }

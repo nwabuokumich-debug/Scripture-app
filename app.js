@@ -31,6 +31,7 @@ let activePicker    = null;
 let selectedVerses  = [];
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB' };
+const cardTranslations = new Map(); // idx → translation override for stack cards
 
 // ── Sidebar toggle ────────────────────────────────────
 const appEl = document.querySelector('.app');
@@ -713,6 +714,7 @@ function renderStackView(id) {
           <div class="stack-card-actions">
             <button class="add-passage-btn" data-idx="${idx}" title="Add scripture">＋</button>
             <button class="note-toggle" data-idx="${idx}" title="Note">✎</button>
+            <button class="card-translation-btn" data-idx="${idx}" title="Switch translation">${TRANSLATIONS[cardTranslations.get(idx) || 'kjv']}</button>
           </div>
           <div class="add-passage-area hidden">
             <input class="add-passage-input" data-cardidx="${idx}" placeholder="Search and press Enter…" autocomplete="off" />
@@ -822,6 +824,45 @@ function renderStackView(id) {
   verseArea.querySelectorAll('.stack-note').forEach(ta => {
     ta.addEventListener('input', () => {
       updateVerseNote(id, parseInt(ta.dataset.idx), ta.value);
+    });
+  });
+
+  verseArea.querySelectorAll('.card-translation-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const idx = parseInt(btn.dataset.idx);
+      const current = cardTranslations.get(idx) || 'kjv';
+      const keys = Object.keys(TRANSLATIONS);
+      const next = keys[(keys.indexOf(current) + 1) % keys.length];
+      cardTranslations.set(idx, next);
+      btn.textContent = TRANSLATIONS[next];
+      btn.disabled = true;
+
+      const card = btn.closest('.stack-verse-card');
+      const stacks = loadStacks();
+      const stack = stacks.find(s => s.id === id);
+      const v = stack?.verses[idx];
+      if (!v) { btn.disabled = false; return; }
+      const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
+
+      // Re-fetch each passage in the new translation
+      const fetched = await Promise.all(passages.map(async p => {
+        const m = p.ref.match(/^(.+?)\s+(\d+):(\d+)$/);
+        if (!m) return p;
+        const [, bookName, ch, verse] = m;
+        const book = allBooks.find(b => b.name.toLowerCase() === bookName.toLowerCase());
+        if (!book) return p;
+        const { data } = await supabase.from('verses').select('text')
+          .eq('book_id', book.id).eq('chapter', parseInt(ch)).eq('verse', parseInt(verse)).eq('translation', next).single();
+        return { ref: p.ref, text: data?.text ?? p.text };
+      }));
+
+      // Update just the verse rows in this card
+      const rows = card.querySelectorAll('.stack-verse-row');
+      fetched.forEach((p, pi) => {
+        const textEl = rows[pi]?.querySelector('.stack-verse-text');
+        if (textEl) textEl.textContent = p.text;
+      });
+      btn.disabled = false;
     });
   });
 
