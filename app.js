@@ -789,7 +789,10 @@ function renderStackView(id) {
             <div class="stack-verse-row${passages.length > 1 ? '' : ' single'}">
               ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
               <div class="stack-verse-text">${escHtml(p.text)}</div>
-              ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}
+              <div class="verse-btns">
+                <button class="stack-compare-btn" data-ref="${escHtml(p.ref)}" title="Compare translations">≡</button>
+                ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}
+              </div>
             </div>`;
       }).join('');
       html += `
@@ -845,6 +848,19 @@ function renderStackView(id) {
   verseArea.querySelectorAll('.remove-passage-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       removePassageFromCard(id, parseInt(btn.dataset.cardidx), parseInt(btn.dataset.pi));
+    });
+  });
+
+  verseArea.querySelectorAll('.stack-compare-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const ref = btn.dataset.ref; // e.g. "Genesis 1:1"
+      const m = ref.match(/^(.+?)\s+(\d+):(\d+)$/);
+      if (!m) return;
+      const [, bookName, chapter, verse] = m;
+      const book = allBooks.find(b => b.name.toLowerCase() === bookName.toLowerCase());
+      if (!book) return;
+      openCompare(ref, book.id, parseInt(chapter), parseInt(verse));
     });
   });
 

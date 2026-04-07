@@ -255,7 +255,14 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
 .stack-verse-ref { font-size: 0.65rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; }
 .remove-verse-btn { background: none; border: none; color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 0 2px; transition: color 0.12s; opacity: 0.4; }
 .remove-verse-btn:hover { color: var(--red); opacity: 1; }
-.stack-verse-row { display: flex; gap: 0; padding: 2px 0 2px 0; align-items: baseline; }
+.stack-verse-row { display: flex; gap: 0; padding: 2px 0 2px 0; align-items: center; }
+.stack-compare-btn {
+  opacity: 0.5; background: none; border: 1px solid var(--border2); color: var(--text-muted);
+  width: 28px; height: 28px; border-radius: 6px; font-size: 0.9rem; line-height: 1;
+  cursor: pointer; flex-shrink: 0; transition: opacity 0.12s, color 0.12s;
+  display: flex; align-items: center; justify-content: center; margin-left: 6px;
+}
+.stack-compare-btn:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
 .stack-verse-row.single { padding: 2px 0; }
 .stack-verse-num { font-family: var(--font-ui); font-size: 0.55rem; font-weight: 700; color: var(--accent); min-width: 0; vertical-align: super; user-select: none; opacity: 0.6; margin-right: 4px; padding-top: 2px; flex-shrink: 0; }
 .stack-verse-text { font-family: var(--font-read); font-size: var(--reader-size, 1.08rem); color: var(--text); line-height: var(--reader-spacing, 2.1); flex: 1; }
