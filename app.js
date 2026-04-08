@@ -29,6 +29,10 @@ let appMode         = 'bible';
 let activeStackId   = null;
 let activePicker    = null;
 let selectedVerses  = [];
+let verseActionMode = false;
+let activeActionVerseNum = null;
+let verseActionPressCleanup = null;
+let suppressVerseTapUntil = 0;
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 'UKJV', mkjv: 'MKJV', litv: 'LITV', cpdv: 'CPDV', darby: 'Darby', webster: 'Webster', dra: 'DRA', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
 // Migrate away from removed translations
@@ -117,6 +121,17 @@ function escHtml(str) {
 }
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+function getCurrentVerseData(vnum) {
+  const verse = currentVerses.find(v => v.verse === vnum);
+  if (!verse || !activeBook || !activeChapter) return null;
+  return {
+    ref: `${activeBook.name} ${activeChapter}:${vnum}`,
+    book: activeBook.name,
+    chapter: activeChapter,
+    verse: vnum,
+    text: verse.text
+  };
 }
 
 // ── Custom modal (replaces prompt/confirm) ────────────
@@ -316,6 +331,7 @@ async function selectChapter(num) {
 
 // ── Render verses ─────────────────────────────────────
 function renderVerses(verses) {
+  if (selectedVerses.length) clearSelection();
   currentVerses = verses;
   const isNT = activeBook.testament === 'new';
   let html = `
@@ -329,39 +345,10 @@ function renderVerses(verses) {
       <div class="verse-row${hasGreek ? ' has-greek' : ''}" ${hasGreek ? `data-verse="${v.verse}"` : ''} data-vnum="${v.verse}">
         <span class="verse-num">${v.verse}</span>
         <span class="verse-text">${escHtml(v.text)}</span>
-        ${hasGreek ? '<span class="greek-hint">α</span>' : ''}
-        <div class="verse-btns">
-          <button class="compare-btn" data-vnum="${v.verse}" title="Compare translations">≡</button>
-          <button class="add-btn" data-vnum="${v.verse}" title="Add to a Study Stack">+</button>
-        </div>
       </div>
     `;
   });
   verseArea.innerHTML = html;
-
-  verseArea.querySelectorAll('.add-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const vnum = parseInt(btn.dataset.vnum);
-      const verse = currentVerses.find(v => v.verse === vnum);
-      if (!verse) return;
-      toggleVerseSelection({
-        ref: `${activeBook.name} ${activeChapter}:${vnum}`,
-        book: activeBook.name,
-        chapter: activeChapter,
-        verse: vnum,
-        text: verse.text
-      }, btn.closest('.verse-row'), btn);
-    });
-  });
-
-  verseArea.querySelectorAll('.compare-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const vnum = parseInt(btn.dataset.vnum);
-      openCompare(`${activeBook.name} ${activeChapter}:${vnum}`, activeBook.id, activeChapter, vnum);
-    });
-  });
 
   verseArea.scrollTop = 0;
 }
@@ -409,14 +396,87 @@ async function openCompare(ref, bookId, chapter, verse) {
 
 // ── Verse click → Greek page ───────────────────────────
 verseArea.addEventListener('click', e => {
-  if (e.target.closest('.add-btn')) return;
-  if (e.target.closest('.compare-btn')) return;
-  const row = e.target.closest('.has-greek');
-  if (!row) return;
-  const verseNum = parseInt(row.dataset.verse);
-  const verseText = row.querySelector('.verse-text').textContent;
-  showGreekPage(verseNum, verseText, greekByVerse[verseNum] ?? []);
+  const row = e.target.closest('.verse-row');
+  if (!row || appMode !== 'bible') return;
+  if (Date.now() < suppressVerseTapUntil) return;
+  if (!verseActionMode) return;
+
+  const verseData = getCurrentVerseData(parseInt(row.dataset.vnum));
+  if (!verseData) return;
+
+  const isSelected = row.classList.contains('selected');
+  if (!isSelected) {
+    toggleVerseSelection(verseData, row, null);
+    setActiveBibleVerse(verseData.verse);
+    return;
+  }
+
+  if (activeActionVerseNum !== verseData.verse) {
+    setActiveBibleVerse(verseData.verse);
+    return;
+  }
+
+  if (selectedVerses.length > 1) {
+    toggleVerseSelection(verseData, row, null);
+    if (activeActionVerseNum === verseData.verse) {
+      const fallback = selectedVerses[selectedVerses.length - 1];
+      setActiveBibleVerse(fallback?.verse ?? null);
+    } else {
+      syncBibleActionRows();
+      updateSelectionBar();
+    }
+    return;
+  }
+
+  setActiveBibleVerse(verseData.verse);
 });
+
+verseArea.addEventListener('touchstart', e => {
+  if (appMode !== 'bible') return;
+  const row = e.target.closest('.verse-row');
+  if (!row) return;
+
+  if (verseActionPressCleanup) verseActionPressCleanup();
+
+  const touch = e.touches[0];
+  const startX = touch.clientX;
+  const startY = touch.clientY;
+
+  const clearPress = () => {
+    clearTimeout(timer);
+    verseArea.removeEventListener('touchmove', onMove);
+    verseArea.removeEventListener('touchend', onEnd);
+    verseArea.removeEventListener('touchcancel', onEnd);
+    if (verseActionPressCleanup === clearPress) verseActionPressCleanup = null;
+  };
+
+  const onMove = evt => {
+    const t = evt.touches?.[0];
+    if (!t) return;
+    if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) clearPress();
+  };
+
+  const onEnd = () => {
+    clearPress();
+  };
+
+  const timer = setTimeout(() => {
+    const verseData = getCurrentVerseData(parseInt(row.dataset.vnum));
+    if (!verseData) {
+      clearPress();
+      return;
+    }
+    startVerseActionMode(verseData, row);
+    suppressVerseTapUntil = Date.now() + 450;
+    navigator.vibrate?.(12);
+    clearPress();
+  }, 380);
+
+  verseActionPressCleanup = clearPress;
+  verseArea.addEventListener('touchmove', onMove, { passive: true });
+  verseArea.addEventListener('touchend', onEnd, { passive: true });
+  verseArea.addEventListener('touchcancel', onEnd, { passive: true });
+}, { passive: true });
 
 // ── Greek analysis page ────────────────────────────────
 async function showGreekPage(verseNum, verseText, greekWords) {
@@ -1309,6 +1369,37 @@ function showToast(msg) {
 }
 
 // ── Multi-select ──────────────────────────────────────
+function syncBibleActionRows() {
+  verseArea.querySelectorAll('.verse-row.action-active').forEach(row => row.classList.remove('action-active'));
+  if (!verseActionMode || activeActionVerseNum == null) return;
+  verseArea.querySelector(`.verse-row[data-vnum="${activeActionVerseNum}"]`)?.classList.add('action-active');
+}
+
+function setActiveBibleVerse(vnum) {
+  activeActionVerseNum = vnum;
+  syncBibleActionRows();
+  updateSelectionBar();
+}
+
+function getActiveBibleVerseData() {
+  if (!verseActionMode || activeActionVerseNum == null) return null;
+  return getCurrentVerseData(activeActionVerseNum);
+}
+
+function startVerseActionMode(verseData, rowEl) {
+  if (!verseActionMode) clearSelection();
+  verseActionMode = true;
+
+  if (!selectedVerses.some(v => v.ref === verseData.ref)) {
+    selectedVerses.push(verseData);
+    rowEl?.classList.add('selected');
+  }
+
+  activeActionVerseNum = verseData.verse;
+  syncBibleActionRows();
+  updateSelectionBar();
+}
+
 function toggleVerseSelection(verseData, rowEl, btn) {
   const idx = selectedVerses.findIndex(v => v.ref === verseData.ref);
   if (idx === -1) {
@@ -1326,6 +1417,9 @@ function toggleVerseSelection(verseData, rowEl, btn) {
 function updateSelectionBar() {
   let bar = document.getElementById('selection-bar');
   if (selectedVerses.length === 0) {
+    verseActionMode = false;
+    activeActionVerseNum = null;
+    syncBibleActionRows();
     bar?.remove();
     return;
   }
@@ -1336,6 +1430,45 @@ function updateSelectionBar() {
     document.body.appendChild(bar);
     requestAnimationFrame(() => bar.classList.add('open'));
   }
+
+  if (verseActionMode && appMode === 'bible') {
+    const activeVerse = getActiveBibleVerseData();
+    const hasGreek = !!(activeVerse && (greekByVerse[activeVerse.verse] ?? []).length);
+    bar.className = 'selection-bar verse-action-bar open';
+    bar.innerHTML = `
+      <div class="sel-head">
+        <span class="sel-count">${selectedVerses.length} verse${selectedVerses.length !== 1 ? 's' : ''} selected</span>
+        <button class="sel-done-btn" title="Done">Done</button>
+      </div>
+      <div class="sel-actions">
+        <button class="sel-secondary-btn" ${hasGreek ? '' : 'disabled'}>Greek</button>
+        <button class="sel-secondary-btn" ${activeVerse ? '' : 'disabled'}>Compare</button>
+        <button class="sel-add-btn">Add to Stack</button>
+      </div>
+    `;
+
+    bar.querySelector('.sel-done-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      clearSelection();
+    });
+    bar.querySelector('.sel-add-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      openStackPicker();
+    });
+    bar.querySelectorAll('.sel-secondary-btn')[0].addEventListener('click', e => {
+      e.stopPropagation();
+      if (!activeVerse || !hasGreek) return;
+      showGreekPage(activeVerse.verse, activeVerse.text, greekByVerse[activeVerse.verse] ?? []);
+    });
+    bar.querySelectorAll('.sel-secondary-btn')[1].addEventListener('click', e => {
+      e.stopPropagation();
+      if (!activeVerse) return;
+      openCompare(`${activeVerse.book} ${activeVerse.chapter}:${activeVerse.verse}`, activeBook.id, activeVerse.chapter, activeVerse.verse);
+    });
+    return;
+  }
+
+  bar.className = 'selection-bar open';
   bar.innerHTML = `
     <span class="sel-count">${selectedVerses.length} verse${selectedVerses.length !== 1 ? 's' : ''} selected</span>
     <button class="sel-add-btn">Add to Stack</button>
@@ -1356,8 +1489,12 @@ function dismissSelectionBar() {
 }
 
 function clearSelection() {
+  closeStackPicker();
   selectedVerses = [];
+  verseActionMode = false;
+  activeActionVerseNum = null;
   document.querySelectorAll('.verse-row.selected, .result-item.selected').forEach(el => el.classList.remove('selected'));
+  document.querySelectorAll('.verse-row.action-active').forEach(el => el.classList.remove('action-active'));
   document.querySelectorAll('.add-btn').forEach(btn => btn.textContent = '+');
   dismissSelectionBar();
 }
@@ -1418,9 +1555,10 @@ function openStackPicker() {
   document.body.appendChild(picker);
   activePicker = picker;
 
-  // Position above selection bar
+  // Position above the current selection/action bar
+  const barHeight = document.getElementById('selection-bar')?.offsetHeight ?? 72;
   picker.style.position = 'fixed';
-  picker.style.bottom = 'max(72px, calc(72px + env(safe-area-inset-bottom)))';
+  picker.style.bottom = `calc(${barHeight + 16}px + env(safe-area-inset-bottom))`;
   picker.style.left = '50%';
   picker.style.transform = 'translateX(-50%)';
 

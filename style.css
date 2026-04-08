@@ -332,6 +332,21 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   transition: transform 0.38s cubic-bezier(0.4, 0, 0.2, 1); will-change: transform; white-space: nowrap;
 }
 .selection-bar.open { transform: translateX(-50%) translateY(0); }
+.selection-bar.verse-action-bar {
+  width: min(520px, calc(100vw - 28px));
+  border-radius: 20px;
+  padding: 14px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  white-space: normal;
+}
+.sel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .sel-count { font-size: 0.82rem; font-weight: 500; }
 .sel-add-btn {
   background: var(--accent); border: none; color: #fff;
@@ -340,6 +355,33 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   cursor: pointer; transition: background 0.12s;
 }
 .sel-add-btn:hover { background: var(--accent-h); }
+.sel-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.sel-secondary-btn,
+.sel-done-btn {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: inherit;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, opacity 0.12s, border-color 0.12s;
+}
+.sel-secondary-btn:hover:not(:disabled),
+.sel-done-btn:hover {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.18);
+}
+.sel-secondary-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .sel-clear-btn {
   background: none; border: none; color: inherit; opacity: 0.45;
   font-size: 1.2rem; line-height: 1; cursor: pointer;
@@ -349,6 +391,10 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
 
 /* ── Selected verse highlight ────────────── */
 .verse-row.selected { background: var(--accent-light) !important; }
+.verse-row.action-active {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-light) !important;
+}
 .verse-row.selected .add-btn {
   opacity: 1 !important; color: var(--accent); border-color: var(--accent);
   background: var(--accent-dim);
@@ -700,8 +746,11 @@ body.theme-dark {
 
   /* ── Selection bar ── */
   .selection-bar { bottom: 16px; width: calc(100% - 28px); border-radius: 16px; justify-content: space-between; }
+  .selection-bar.verse-action-bar { width: calc(100% - 28px); border-radius: 18px; }
   .sel-count { font-size: 0.92rem; }
   .sel-add-btn { font-size: 0.9rem; padding: 8px 20px; }
+  .sel-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sel-secondary-btn, .sel-done-btn { font-size: 0.88rem; padding: 10px 12px; }
 
   /* ── Modal ── */
   .modal { width: calc(100vw - 32px); }
