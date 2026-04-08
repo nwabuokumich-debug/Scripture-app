@@ -830,7 +830,15 @@ function renderStackView(id, { preserveScroll = false } = {}) {
 
   html += `</div>`;
   verseArea.innerHTML = html;
-  verseArea.scrollTop = scrollTop;
+  if (preserveScroll) {
+    const restoreScroll = () => { verseArea.scrollTop = scrollTop; };
+    requestAnimationFrame(() => {
+      restoreScroll();
+      requestAnimationFrame(restoreScroll);
+    });
+  } else {
+    verseArea.scrollTop = 0;
+  }
 
   document.getElementById('stack-title-input').addEventListener('input', e => {
     updateStackTitle(id, e.target.value);
