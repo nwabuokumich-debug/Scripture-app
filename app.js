@@ -1193,13 +1193,9 @@ function renderStackView(id, { preserveScroll = false } = {}) {
             <div class="stack-verse-row${passages.length > 1 ? '' : ' single'}${isSelectedPassage ? ' stack-selected' : ''}"
                  data-passage-idx="${pi}"
                  data-passage-ref="${escHtml(p.ref)}">
-              <div class="stack-verse-top">
-                <span class="stack-verse-meta">
-                  ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
-                </span>
-                ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}
-              </div>
+              ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
               <div class="stack-verse-text">${escHtml(p.text)}</div>
+              ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}
             </div>`;
       }).join('');
       html += `
