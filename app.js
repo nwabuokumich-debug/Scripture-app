@@ -379,6 +379,21 @@ function renderCompareTranslationRows(byTranslation) {
   }).join('');
 }
 
+function formatComparePassageMarker(verseRow, anchor) {
+  if (!anchor || verseRow.book !== anchor.book) return verseRow.ref;
+  if (verseRow.chapter !== anchor.chapter) return `${verseRow.chapter}:${verseRow.verse}`;
+  return String(verseRow.verse);
+}
+
+function renderComparePassageRows(rows, anchor) {
+  return rows.map(row => `
+    <div class="compare-passage-verse">
+      <div class="compare-passage-marker">${escHtml(formatComparePassageMarker(row, anchor))}</div>
+      <div class="compare-passage-text">${escHtml(row.text)}</div>
+    </div>
+  `).join('');
+}
+
 function closeCompare() {
   compareBackdrop.classList.remove('open');
   setTimeout(() => compareBackdrop.classList.add('hidden'), 380);
@@ -418,7 +433,7 @@ async function openCompareSelectedVerses(verses) {
   const sections = await Promise.all(sorted.map(async verse => {
     const book = allBooks.find(b => b.name === verse.book) ?? activeBook;
     if (!book) {
-      return { ref: verse.ref, rows: '' };
+      return null;
     }
 
     const { data, error } = await supabase
@@ -430,19 +445,45 @@ async function openCompareSelectedVerses(verses) {
       .order('translation');
 
     if (error || !data?.length) {
-      return { ref: verse.ref, rows: '<div class="compare-loading">No data found.</div>' };
+      return null;
     }
 
-    const byTranslation = Object.fromEntries(data.map(r => [r.translation, r.text]));
-    return { ref: verse.ref, rows: renderCompareTranslationRows(byTranslation) };
+    return {
+      verse,
+      rows: data.map(r => ({ translation: r.translation, text: r.text }))
+    };
   }));
 
-  compareBody.innerHTML = sections.map(section => `
-    <section class="compare-section">
-      <div class="compare-section-ref">${escHtml(section.ref)}</div>
-      ${section.rows}
-    </section>
-  `).join('');
+  const grouped = new Map();
+  sections.filter(Boolean).forEach(section => {
+    section.rows.forEach(row => {
+      if (!grouped.has(row.translation)) grouped.set(row.translation, []);
+      grouped.get(row.translation).push({
+        ref: section.verse.ref,
+        book: section.verse.book,
+        chapter: section.verse.chapter,
+        verse: section.verse.verse,
+        text: row.text
+      });
+    });
+  });
+
+  if (grouped.size === 0) {
+    compareBody.innerHTML = '<div class="compare-loading">No data found.</div>';
+    return;
+  }
+
+  compareBody.innerHTML = Object.entries(TRANSLATIONS).map(([key, label]) => {
+    const rows = grouped.get(key);
+    if (!rows?.length) return '';
+    return `
+      <section class="compare-section">
+        <div class="compare-section-ref">${label}</div>
+        <div class="compare-passage">
+          ${renderComparePassageRows(rows, sorted[0])}
+        </div>
+      </section>`;
+  }).join('');
 }
 
 // ── Verse click → Greek page ───────────────────────────

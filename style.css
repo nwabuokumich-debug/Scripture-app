@@ -225,7 +225,34 @@ header { padding: max(10px, env(safe-area-inset-top)) 24px 10px; border-bottom: 
   text-transform: uppercase;
   letter-spacing: 1.2px;
 }
-.compare-section .compare-row { padding-left: 20px; padding-right: 20px; }
+.compare-passage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 20px 16px;
+}
+.compare-passage-verse {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+}
+.compare-passage-marker {
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  padding-top: 2px;
+  min-width: 1.8rem;
+}
+.compare-passage-text {
+  font-family: var(--font-read);
+  font-size: var(--reader-size, 1.08rem);
+  color: var(--text);
+  line-height: var(--reader-spacing, 1.9);
+}
 
 /* ── Search results ──────────────────────── */
 .result-count { font-size: 0.68rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
