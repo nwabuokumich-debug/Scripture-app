@@ -481,6 +481,13 @@ verseArea.addEventListener('touchstart', e => {
   verseArea.addEventListener('touchcancel', onEnd, { passive: true });
 }, { passive: true });
 
+verseArea.addEventListener('contextmenu', e => {
+  if (appMode !== 'bible') return;
+  const row = e.target instanceof Element ? e.target.closest('.verse-row') : null;
+  if (!row) return;
+  e.preventDefault();
+});
+
 // ── Greek analysis page ────────────────────────────────
 async function showGreekPage(verseNum, verseText, greekWords) {
   greekPage.innerHTML = `
