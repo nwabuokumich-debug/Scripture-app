@@ -160,8 +160,10 @@ header { padding: max(10px, env(safe-area-inset-top)) 24px 10px; border-bottom: 
   display: flex; gap: 0; padding: 2px 8px 2px 4px; border-radius: 6px;
   margin-left: -4px; transition: background 0.12s; align-items: baseline;
 }
-.verse-row:hover { background: var(--accent-light); }
-.verse-row:hover .add-btn { opacity: 1; }
+@media (hover: hover) {
+  .verse-row:hover { background: var(--accent-light); }
+  .verse-row:hover .add-btn { opacity: 1; }
+}
 
 .verse-num { font-family: var(--font-ui); font-size: 0.55rem; font-weight: 700; color: var(--accent); min-width: 0; vertical-align: super; user-select: none; opacity: 0.6; margin-right: 4px; padding-top: 2px; flex-shrink: 0; }
 .verse-text { font-family: var(--font-read); font-size: var(--reader-size, 1.08rem); color: var(--text); line-height: var(--reader-spacing, 2.1); flex: 1; }
@@ -184,7 +186,7 @@ header { padding: max(10px, env(safe-area-inset-top)) 24px 10px; border-bottom: 
   display: flex; align-items: center; justify-content: center;
 }
 .compare-btn:hover { color: var(--accent); border-color: var(--accent); }
-.verse-row:hover .compare-btn { opacity: 1; }
+@media (hover: hover) { .verse-row:hover .compare-btn { opacity: 1; } }
 
 /* ── Compare modal ───────────────────────── */
 .compare-backdrop { position: fixed; inset: 0; z-index: 990; background: rgba(0,0,0,0); display: flex; align-items: flex-end; justify-content: center; pointer-events: none; transition: background 0.35s ease; }
