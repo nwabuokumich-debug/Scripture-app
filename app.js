@@ -327,17 +327,13 @@ function renderVerses(verses) {
     const hasGreek = isNT && greekWords.length > 0;
     html += `
       <div class="verse-row${hasGreek ? ' has-greek' : ''}" ${hasGreek ? `data-verse="${v.verse}"` : ''} data-vnum="${v.verse}">
-        <div class="verse-top">
-          <div class="verse-meta">
-            <span class="verse-num">${v.verse}</span>
-            ${hasGreek ? '<span class="greek-hint">α</span>' : ''}
-          </div>
-          <div class="verse-btns">
-            <button class="compare-btn" data-vnum="${v.verse}" title="Compare translations">≡</button>
-            <button class="add-btn" data-vnum="${v.verse}" title="Add to a Study Stack">+</button>
-          </div>
-        </div>
+        <span class="verse-num">${v.verse}</span>
         <span class="verse-text">${escHtml(v.text)}</span>
+        ${hasGreek ? '<span class="greek-hint">α</span>' : ''}
+        <div class="verse-btns">
+          <button class="compare-btn" data-vnum="${v.verse}" title="Compare translations">≡</button>
+          <button class="add-btn" data-vnum="${v.verse}" title="Add to a Study Stack">+</button>
+        </div>
       </div>
     `;
   });
