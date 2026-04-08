@@ -8,6 +8,7 @@
 - Preserved stack scroll position when reordering items so the list does not jump after drag/reorder actions.
 - Bumped the app asset cache versions in `index.html` and `sw.js` to force updated JS/CSS to load after changes.
 - Created this handoff document to capture the current app state, setup notes, and known issues for Claude.
+- Fixed red verse highlight appearing on tap during scroll (both light and dark mode). Root cause: mobile browsers keep `:hover` state after a tap; `--accent-light` in dark mode is `#2a1518` (dark red) making it very visible. Fix: wrapped `.verse-row:hover` styles in `@media (hover: hover)` so they only fire on mouse devices. Also added scroll-detection in the touchmove handler to clear `verseActionMode` if user scrolls.
 
 ## What This App Is
 
