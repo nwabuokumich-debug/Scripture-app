@@ -453,7 +453,10 @@ verseArea.addEventListener('touchstart', e => {
   const onMove = evt => {
     const t = evt.touches?.[0];
     if (!t) return;
-    if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) clearPress();
+    if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) {
+      if (verseActionMode) { verseActionMode = false; activeActionVerseNum = null; syncBibleActionRows(); updateSelectionBar(); }
+      clearPress();
+    }
   };
 
   const onEnd = () => {
