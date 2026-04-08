@@ -159,12 +159,14 @@ header { padding: max(10px, env(safe-area-inset-top)) 24px 10px; border-bottom: 
 .verse-row {
   display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 10px 4px; border-radius: 8px;
   margin-left: -4px; transition: background 0.12s, transform 0.18s ease; align-items: stretch;
+  position: relative;
 }
 .verse-row:hover { background: var(--accent-light); }
-.verse-row:hover .add-btn { opacity: 1; }
+.verse-row.controls-open { background: var(--accent-light); }
 
 .verse-top {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  display: flex; align-items: flex-start; justify-content: flex-start; gap: 8px;
+  position: relative; min-height: 1rem;
 }
 .verse-meta { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .verse-num { font-family: var(--font-ui); font-size: 0.55rem; font-weight: 700; color: var(--accent); min-width: 0; user-select: none; opacity: 0.6; line-height: 1; flex-shrink: 0; }
@@ -172,6 +174,15 @@ header { padding: max(10px, env(safe-area-inset-top)) 24px 10px; border-bottom: 
 
 .verse-btns {
   display: flex; flex-direction: column; gap: 4px; align-self: flex-start; flex-shrink: 0;
+  position: absolute; top: -1px; right: 0;
+  opacity: 0; pointer-events: none; transform: translateY(-4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.verse-row.controls-open .verse-btns {
+  opacity: 1; pointer-events: auto; transform: translateY(0);
+}
+.verse-row.controls-open .greek-hint {
+  opacity: 0.7;
 }
 .add-btn {
   opacity: 0; background: none; border: 1px solid var(--border2); color: var(--text-muted);
@@ -188,7 +199,12 @@ header { padding: max(10px, env(safe-area-inset-top)) 24px 10px; border-bottom: 
   display: flex; align-items: center; justify-content: center;
 }
 .compare-btn:hover { color: var(--accent); border-color: var(--accent); }
-.verse-row:hover .compare-btn { opacity: 1; }
+.verse-row.controls-open .compare-btn {
+  opacity: 1;
+}
+.verse-row.controls-open .add-btn {
+  opacity: 1;
+}
 
 /* ── Compare modal ───────────────────────── */
 .compare-backdrop { position: fixed; inset: 0; z-index: 990; background: rgba(0,0,0,0); display: flex; align-items: flex-end; justify-content: center; pointer-events: none; transition: background 0.35s ease; }
@@ -223,8 +239,20 @@ header { padding: max(10px, env(safe-area-inset-top)) 24px 10px; border-bottom: 
 
 /* ── Greek ────────────────────────────────── */
 .verse-row.has-greek { cursor: pointer; }
-.greek-hint { font-size: 0.6rem; color: var(--teal); opacity: 0; margin-left: 4px; vertical-align: super; user-select: none; transition: opacity 0.12s; font-weight: 700; }
-.verse-row.has-greek:hover .greek-hint { opacity: 0.7; }
+.greek-hint { font-size: 0.6rem; color: var(--teal); opacity: 0; margin-left: 4px; user-select: none; transition: opacity 0.12s; font-weight: 700; }
+
+@media (hover: hover) and (pointer: fine) {
+  .verse-row:hover .verse-btns {
+    opacity: 1; pointer-events: auto; transform: translateY(0);
+  }
+  .verse-row:hover .compare-btn,
+  .verse-row:hover .add-btn {
+    opacity: 1;
+  }
+  .verse-row:hover .greek-hint {
+    opacity: 0.7;
+  }
+}
 
 .greek-page { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: flex; flex-direction: column; }
 .greek-page.hidden { display: none; }
@@ -641,13 +669,14 @@ body.theme-dark {
   .verse-area { padding: 24px 14px 100px; }
   .book-title { font-size: 1.8rem; }
   .chapter-title { font-size: 0.75rem; letter-spacing: 2px; }
+  .verse-row { -webkit-touch-callout: none; user-select: none; }
   .verse-num { font-size: 0.62rem; }
   .verse-text { font-size: var(--reader-size, 1.08rem); }
 
   /* ── Always show buttons on mobile (no hover) ── */
-  .add-btn { opacity: 0.5; width: 32px; height: 32px; font-size: 1.1rem; border-radius: 8px; }
-  .compare-btn { opacity: 0.5; width: 32px; height: 32px; font-size: 1.1rem; border-radius: 8px; }
-  .verse-btns { gap: 6px; }
+  .add-btn { width: 32px; height: 32px; font-size: 1.1rem; border-radius: 8px; }
+  .compare-btn { width: 32px; height: 32px; font-size: 1.1rem; border-radius: 8px; }
+  .verse-btns { gap: 6px; top: -2px; }
 
   /* ── Greek page ── */
   .gp-scroll { padding: 20px 16px 80px; }
