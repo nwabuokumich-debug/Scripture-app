@@ -327,13 +327,17 @@ function renderVerses(verses) {
     const hasGreek = isNT && greekWords.length > 0;
     html += `
       <div class="verse-row${hasGreek ? ' has-greek' : ''}" ${hasGreek ? `data-verse="${v.verse}"` : ''} data-vnum="${v.verse}">
-        <span class="verse-num">${v.verse}</span>
-        <span class="verse-text">${escHtml(v.text)}</span>
-        ${hasGreek ? '<span class="greek-hint">α</span>' : ''}
-        <div class="verse-btns">
-          <button class="compare-btn" data-vnum="${v.verse}" title="Compare translations">≡</button>
-          <button class="add-btn" data-vnum="${v.verse}" title="Add to a Study Stack">+</button>
+        <div class="verse-top">
+          <div class="verse-meta">
+            <span class="verse-num">${v.verse}</span>
+            ${hasGreek ? '<span class="greek-hint">α</span>' : ''}
+          </div>
+          <div class="verse-btns">
+            <button class="compare-btn" data-vnum="${v.verse}" title="Compare translations">≡</button>
+            <button class="add-btn" data-vnum="${v.verse}" title="Add to a Study Stack">+</button>
+          </div>
         </div>
+        <span class="verse-text">${escHtml(v.text)}</span>
       </div>
     `;
   });
@@ -750,10 +754,11 @@ function openStack(id) {
 }
 
 // ── Render stack in main area ─────────────────────────
-function renderStackView(id) {
+function renderStackView(id, { preserveScroll = false } = {}) {
   const stacks = loadStacks();
   const stack = stacks.find(s => s.id === id);
   if (!stack) return;
+  const scrollTop = preserveScroll ? verseArea.scrollTop : 0;
 
   let html = `
     <div class="stack-view">
@@ -789,12 +794,16 @@ function renderStackView(id) {
             const verseNum = p.ref.match(/:(\d+)/)?.[1] || '';
             return `
             <div class="stack-verse-row${passages.length > 1 ? '' : ' single'}">
-              ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
-              <div class="stack-verse-text">${escHtml(p.text)}</div>
-              <div class="verse-btns">
-                <button class="stack-compare-btn" data-ref="${escHtml(p.ref)}" title="Compare translations">≡</button>
-                ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}
+              <div class="stack-verse-top">
+                <span class="stack-verse-meta">
+                  ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
+                </span>
+                <div class="verse-btns">
+                  <button class="stack-compare-btn" data-ref="${escHtml(p.ref)}" title="Compare translations">≡</button>
+                  ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}
+                </div>
               </div>
+              <div class="stack-verse-text">${escHtml(p.text)}</div>
             </div>`;
       }).join('');
       html += `
@@ -821,7 +830,7 @@ function renderStackView(id) {
 
   html += `</div>`;
   verseArea.innerHTML = html;
-  verseArea.scrollTop = 0;
+  verseArea.scrollTop = scrollTop;
 
   document.getElementById('stack-title-input').addEventListener('input', e => {
     updateStackTitle(id, e.target.value);
@@ -939,36 +948,48 @@ function renderStackView(id) {
       const idx = parseInt(btn.dataset.idx);
       const current = cardTranslations.get(idx) || 'kjv';
       openTranslationPicker(btn, current, async next => {
-      cardTranslations.set(idx, next);
-      btn.textContent = TRANSLATIONS[next];
-      btn.disabled = true;
+        const card = btn.closest('.stack-verse-card');
+        if (!card) return;
 
-      const card = btn.closest('.stack-verse-card');
-      const stacks = loadStacks();
-      const stack = stacks.find(s => s.id === id);
-      const v = stack?.verses[idx];
-      if (!v) { btn.disabled = false; return; }
-      const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
+        btn.disabled = true;
+        card.classList.add('is-switching');
 
-      // Re-fetch each passage in the new translation
-      const fetched = await Promise.all(passages.map(async p => {
-        const m = p.ref.match(/^(.+?)\s+(\d+):(\d+)$/);
-        if (!m) return p;
-        const [, bookName, ch, verse] = m;
-        const book = allBooks.find(b => b.name.toLowerCase() === bookName.toLowerCase());
-        if (!book) return p;
-        const { data } = await supabase.from('verses').select('text')
-          .eq('book_id', book.id).eq('chapter', parseInt(ch)).eq('verse', parseInt(verse)).eq('translation', next).single();
-        return { ref: p.ref, text: data?.text ?? p.text };
-      }));
+        try {
+          const stacks = loadStacks();
+          const stack = stacks.find(s => s.id === id);
+          const v = stack?.verses[idx];
+          if (!v) return;
 
-      // Update just the verse rows in this card
-      const rows = card.querySelectorAll('.stack-verse-row');
-      fetched.forEach((p, pi) => {
-        const textEl = rows[pi]?.querySelector('.stack-verse-text');
-        if (textEl) textEl.textContent = p.text;
-      });
-      btn.disabled = false;
+          const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
+
+          // Re-fetch each passage in the new translation.
+          const fetched = await Promise.all(passages.map(async p => {
+            const m = p.ref.match(/^(.+?)\s+(\d+):(\d+)$/);
+            if (!m) return p;
+            const [, bookName, ch, verse] = m;
+            const book = allBooks.find(b => b.name.toLowerCase() === bookName.toLowerCase());
+            if (!book) return p;
+            const { data } = await supabase.from('verses').select('text')
+              .eq('book_id', book.id).eq('chapter', parseInt(ch)).eq('verse', parseInt(verse)).eq('translation', next).single();
+            return { ref: p.ref, text: data?.text ?? p.text };
+          }));
+
+          // Update just the verse rows in this card.
+          const rows = card.querySelectorAll('.stack-verse-row');
+          fetched.forEach((p, pi) => {
+            const textEl = rows[pi]?.querySelector('.stack-verse-text');
+            if (textEl) textEl.textContent = p.text;
+          });
+
+          cardTranslations.set(idx, next);
+          btn.textContent = TRANSLATIONS[next];
+        } finally {
+          requestAnimationFrame(() => {
+            const card = btn.closest('.stack-verse-card');
+            if (card) card.classList.remove('is-switching');
+            btn.disabled = false;
+          });
+        }
       }); // end openTranslationPicker callback
     });
   });
@@ -1241,7 +1262,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
           st.verses = newOrder.map(i => st.verses[i]);
           saveStacks(stacks);
         }
-        renderStackView(finishStackId);
+        renderStackView(finishStackId, { preserveScroll: true });
       }
     }, 200);
   }
