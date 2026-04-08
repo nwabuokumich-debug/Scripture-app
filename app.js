@@ -34,24 +34,6 @@ const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 
 // Migrate away from removed translations
 if (!TRANSLATIONS[activeTranslation]) { activeTranslation = 'kjv'; localStorage.setItem('active_translation', 'kjv'); }
 const cardTranslations = new Map(); // idx → translation override for stack cards
-let verseControlsRow = null;
-let versePressTimer = null;
-let versePressCleanup = null;
-let suppressVerseClickUntil = 0;
-
-function setVerseControlsOpen(row, open) {
-  if (!row) return;
-  row.classList.toggle('controls-open', open);
-  if (open) {
-    verseControlsRow = row;
-  } else if (verseControlsRow === row) {
-    verseControlsRow = null;
-  }
-}
-
-function closeVerseControls() {
-  if (verseControlsRow) setVerseControlsOpen(verseControlsRow, false);
-}
 
 // ── Sidebar toggle ────────────────────────────────────
 const appEl = document.querySelector('.app');
@@ -334,7 +316,6 @@ async function selectChapter(num) {
 
 // ── Render verses ─────────────────────────────────────
 function renderVerses(verses) {
-  closeVerseControls();
   currentVerses = verses;
   const isNT = activeBook.testament === 'new';
   let html = `
@@ -434,66 +415,12 @@ async function openCompare(ref, bookId, chapter, verse) {
 verseArea.addEventListener('click', e => {
   if (e.target.closest('.add-btn')) return;
   if (e.target.closest('.compare-btn')) return;
-  const row = e.target.closest('.verse-row');
+  const row = e.target.closest('.has-greek');
   if (!row) return;
-  if (Date.now() < suppressVerseClickUntil) return;
-  if (row.classList.contains('controls-open')) {
-    closeVerseControls();
-    return;
-  }
-  if (verseControlsRow && verseControlsRow !== row) {
-    closeVerseControls();
-  }
-  if (!row.classList.contains('has-greek')) return;
   const verseNum = parseInt(row.dataset.verse);
   const verseText = row.querySelector('.verse-text').textContent;
   showGreekPage(verseNum, verseText, greekByVerse[verseNum] ?? []);
 });
-
-verseArea.addEventListener('touchstart', e => {
-  if (appMode !== 'bible') return;
-  const row = e.target.closest('.verse-row');
-  if (!row || e.target.closest('.verse-btns')) return;
-
-  if (versePressCleanup) versePressCleanup();
-  const touch = e.touches[0];
-  const startX = touch.clientX;
-  const startY = touch.clientY;
-
-  const clearPress = () => {
-    clearTimeout(versePressTimer);
-    versePressTimer = null;
-    verseArea.removeEventListener('touchmove', onMove);
-    verseArea.removeEventListener('touchend', onEnd);
-    verseArea.removeEventListener('touchcancel', onEnd);
-    if (versePressCleanup === clearPress) versePressCleanup = null;
-  };
-
-  const onMove = evt => {
-    const t = evt.touches?.[0];
-    if (!t) return;
-    if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) {
-      clearPress();
-    }
-  };
-
-  const onEnd = () => {
-    clearPress();
-  };
-
-  versePressCleanup = clearPress;
-  versePressTimer = setTimeout(() => {
-    closeVerseControls();
-    setVerseControlsOpen(row, true);
-    suppressVerseClickUntil = Date.now() + 500;
-    navigator.vibrate?.(12);
-    clearPress();
-  }, 380);
-
-  verseArea.addEventListener('touchmove', onMove, { passive: true });
-  verseArea.addEventListener('touchend', onEnd, { passive: true });
-  verseArea.addEventListener('touchcancel', onEnd, { passive: true });
-}, { passive: true });
 
 // ── Greek analysis page ────────────────────────────────
 async function showGreekPage(verseNum, verseText, greekWords) {
