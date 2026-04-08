@@ -33,6 +33,11 @@ let verseActionMode = false;
 let activeActionVerseNum = null;
 let verseActionPressCleanup = null;
 let suppressVerseTapUntil = 0;
+let stackCompareMode = false;
+let activeStackCompareIdx = null;
+let stackCompareSelectedRefs = [];
+let stackComparePressCleanup = null;
+let suppressStackTapUntil = 0;
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 'UKJV', mkjv: 'MKJV', litv: 'LITV', cpdv: 'CPDV', darby: 'Darby', webster: 'Webster', dra: 'DRA', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
 // Migrate away from removed translations
@@ -486,9 +491,180 @@ async function openCompareSelectedVerses(verses) {
   }).join('');
 }
 
+function parsePassageRef(ref) {
+  const m = String(ref ?? '').match(/^(.+?)\s+(\d+):(\d+)$/);
+  if (!m) return null;
+  const [, bookName, chapter, verse] = m;
+  const book = allBooks.find(b => b.name.toLowerCase() === bookName.toLowerCase());
+  if (!book) return null;
+  return {
+    ref: String(ref),
+    book: book.name,
+    chapter: parseInt(chapter),
+    verse: parseInt(verse)
+  };
+}
+
+function getActiveStackCard() {
+  if (!stackCompareMode || activeStackCompareIdx == null || activeStackId == null) return null;
+  const stacks = loadStacks();
+  const stack = stacks.find(s => s.id === activeStackId);
+  const card = stack?.verses?.[activeStackCompareIdx];
+  if (!stack || !card) return null;
+  return { stack, card, idx: activeStackCompareIdx };
+}
+
+function getActiveStackComparePassages() {
+  const active = getActiveStackCard();
+  if (!active) return [];
+  const passages = active.card.passages ?? [{ ref: active.card.ref, text: active.card.text }];
+  const selected = stackCompareSelectedRefs.length
+    ? passages.filter(p => stackCompareSelectedRefs.includes(p.ref))
+    : passages;
+  return selected
+    .map(p => {
+      const parsed = parsePassageRef(p.ref);
+      if (!parsed) return null;
+      return { ...parsed, text: p.text };
+    })
+    .filter(Boolean);
+}
+
+function syncStackCompareRows() {
+  verseArea.querySelectorAll('.stack-verse-card.action-active').forEach(card => card.classList.remove('action-active'));
+  verseArea.querySelectorAll('.stack-verse-row.stack-selected').forEach(row => row.classList.remove('stack-selected'));
+
+  const active = getActiveStackCard();
+  if (!active) return;
+
+  const passages = active.card.passages ?? [{ ref: active.card.ref, text: active.card.text }];
+  const validRefs = new Set(passages.map(p => p.ref));
+  if (stackCompareSelectedRefs.length) {
+    stackCompareSelectedRefs = stackCompareSelectedRefs.filter(ref => validRefs.has(ref));
+  }
+
+  const card = verseArea.querySelector(`.stack-verse-card[data-idx="${active.idx}"]`);
+  if (!card) return;
+  card.classList.add('action-active');
+
+  if (!stackCompareSelectedRefs.length) return;
+  const selected = new Set(stackCompareSelectedRefs);
+  card.querySelectorAll('.stack-verse-row').forEach(row => {
+    if (selected.has(row.dataset.passageRef)) {
+      row.classList.add('stack-selected');
+    }
+  });
+}
+
+function dismissStackCompareBar() {
+  const bar = document.getElementById('stack-selection-bar');
+  if (!bar) return;
+  bar.classList.remove('open');
+  setTimeout(() => bar.remove(), 400);
+}
+
+function clearStackCompareMode() {
+  if (stackComparePressCleanup) stackComparePressCleanup();
+  stackCompareMode = false;
+  activeStackCompareIdx = null;
+  stackCompareSelectedRefs = [];
+  suppressStackTapUntil = 0;
+  syncStackCompareRows();
+  dismissStackCompareBar();
+}
+
+function startStackCompareMode(cardIdx) {
+  const nextIdx = parseInt(cardIdx);
+  if (Number.isNaN(nextIdx)) return;
+  clearSelection();
+  if (activeStackCompareIdx !== nextIdx) {
+    stackCompareSelectedRefs = [];
+  }
+  stackCompareMode = true;
+  activeStackCompareIdx = nextIdx;
+  syncStackCompareRows();
+  updateStackCompareBar();
+}
+
+function toggleStackComparePassage(cardIdx, passageRef) {
+  if (!stackCompareMode || activeStackCompareIdx !== parseInt(cardIdx)) return;
+  const ref = String(passageRef ?? '');
+  if (!ref) return;
+  const idx = stackCompareSelectedRefs.indexOf(ref);
+  if (idx === -1) {
+    stackCompareSelectedRefs.push(ref);
+  } else {
+    stackCompareSelectedRefs.splice(idx, 1);
+  }
+  syncStackCompareRows();
+  updateStackCompareBar();
+}
+
+async function openActiveStackCompare() {
+  const verses = getActiveStackComparePassages();
+  if (!verses.length) return;
+  await openCompareSelectedVerses(verses);
+}
+
+function updateStackCompareBar() {
+  let bar = document.getElementById('stack-selection-bar');
+  const active = getActiveStackCard();
+  if (!active) {
+    dismissStackCompareBar();
+    return;
+  }
+
+  const passages = active.card.passages ?? [{ ref: active.card.ref, text: active.card.text }];
+  const selectedCount = stackCompareSelectedRefs.length;
+  const countLabel = selectedCount
+    ? `${selectedCount} verse${selectedCount !== 1 ? 's' : ''} selected`
+    : `${passages.length} verse${passages.length !== 1 ? 's' : ''} in block`;
+
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'stack-selection-bar';
+    bar.className = 'selection-bar stack-compare-bar';
+    document.body.appendChild(bar);
+    requestAnimationFrame(() => bar.classList.add('open'));
+  }
+
+  bar.className = 'selection-bar stack-compare-bar open';
+  bar.innerHTML = `
+    <div class="sel-head">
+      <span class="sel-count">${countLabel}</span>
+      <button class="sel-done-btn" title="Done">Done</button>
+    </div>
+    <div class="sel-actions">
+      <button class="sel-secondary-btn">Compare</button>
+    </div>
+  `;
+
+  bar.querySelector('.sel-done-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    clearStackCompareMode();
+  });
+  bar.querySelector('.sel-secondary-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openActiveStackCompare();
+  });
+}
+
 // ── Verse click → Greek page ───────────────────────────
 verseArea.addEventListener('click', e => {
-  const row = e.target.closest('.verse-row');
+  const target = e.target instanceof Element ? e.target : null;
+  if (!target) return;
+
+  if (appMode === 'stacks') {
+    if (Date.now() < suppressStackTapUntil) return;
+    const row = target.closest('.stack-verse-row');
+    if (!row || !stackCompareMode) return;
+    const card = row.closest('.stack-verse-card');
+    if (!card || parseInt(card.dataset.idx) !== activeStackCompareIdx) return;
+    toggleStackComparePassage(card.dataset.idx, row.dataset.passageRef);
+    return;
+  }
+
+  const row = target.closest('.verse-row');
   if (!row || appMode !== 'bible') return;
   if (Date.now() < suppressVerseTapUntil) return;
   if (!verseActionMode) return;
@@ -585,6 +761,56 @@ verseArea.addEventListener('selectstart', e => {
   if (!row) return;
   e.preventDefault();
 });
+
+verseArea.addEventListener('touchstart', e => {
+  if (appMode !== 'stacks') return;
+  const target = e.target instanceof Element ? e.target : null;
+  if (!target) return;
+  const row = target.closest('.stack-verse-row');
+  if (!row) return;
+  if (target.closest('input, button, textarea, a')) return;
+
+  if (stackComparePressCleanup) stackComparePressCleanup();
+
+  const touch = e.touches[0];
+  const startX = touch.clientX;
+  const startY = touch.clientY;
+  const card = row.closest('.stack-verse-card');
+  if (!card) return;
+  const cardIdx = parseInt(card.dataset.idx);
+
+  const clearPress = () => {
+    clearTimeout(timer);
+    verseArea.removeEventListener('touchmove', onMove);
+    verseArea.removeEventListener('touchend', onEnd);
+    verseArea.removeEventListener('touchcancel', onEnd);
+    if (stackComparePressCleanup === clearPress) stackComparePressCleanup = null;
+  };
+
+  const onMove = evt => {
+    const t = evt.touches?.[0];
+    if (!t) return;
+    if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) {
+      clearPress();
+    }
+  };
+
+  const onEnd = () => {
+    clearPress();
+  };
+
+  const timer = setTimeout(() => {
+    startStackCompareMode(cardIdx);
+    suppressStackTapUntil = Date.now() + 450;
+    navigator.vibrate?.(12);
+    clearPress();
+  }, 380);
+
+  stackComparePressCleanup = clearPress;
+  verseArea.addEventListener('touchmove', onMove, { passive: true });
+  verseArea.addEventListener('touchend', onEnd, { passive: true });
+  verseArea.addEventListener('touchcancel', onEnd, { passive: true });
+}, { passive: true });
 
 // ── Greek analysis page ────────────────────────────────
 async function showGreekPage(verseNum, verseText, greekWords) {
@@ -858,6 +1084,7 @@ function saveStacks(stacks) {
 function setMode(mode) {
   appMode = mode;
   if (mode === 'stacks') {
+    clearSelection();
     bookList.classList.add('hidden');
     stackList.classList.remove('hidden');
     stacksFooter.classList.remove('hidden');
@@ -874,6 +1101,7 @@ function setMode(mode) {
       showStacksWelcome();
     }
   } else {
+    clearStackCompareMode();
     bookList.classList.remove('hidden');
     stackList.classList.add('hidden');
     stacksFooter.classList.add('hidden');
@@ -911,6 +1139,9 @@ function renderStacksList() {
 
 // ── Open a stack ──────────────────────────────────────
 function openStack(id) {
+  if (activeStackId !== id) {
+    clearStackCompareMode();
+  }
   activeStackId = id;
   renderStacksList();
   renderStackView(id);
@@ -945,6 +1176,7 @@ function renderStackView(id, { preserveScroll = false } = {}) {
     stack.verses.forEach((v, idx) => {
       const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
       const hasNote = v.note && v.note.trim();
+      const isActiveCard = stackCompareMode && idx === activeStackCompareIdx;
       let cardRef;
       if (passages.length > 1 && passages.every(p => p.ref.replace(/:\d+$/, '') === passages[0].ref.replace(/:\d+$/, ''))) {
         const nums = passages.map(p => parseInt(p.ref.match(/:(\d+)$/)?.[1])).filter(n => !isNaN(n));
@@ -956,8 +1188,11 @@ function renderStackView(id, { preserveScroll = false } = {}) {
       }
       const passagesHtml = passages.map((p, pi) => {
             const verseNum = p.ref.match(/:(\d+)/)?.[1] || '';
+            const isSelectedPassage = isActiveCard && stackCompareSelectedRefs.includes(p.ref);
             return `
-            <div class="stack-verse-row${passages.length > 1 ? '' : ' single'}">
+            <div class="stack-verse-row${passages.length > 1 ? '' : ' single'}${isSelectedPassage ? ' stack-selected' : ''}"
+                 data-passage-idx="${pi}"
+                 data-passage-ref="${escHtml(p.ref)}">
               <div class="stack-verse-top">
                 <span class="stack-verse-meta">
                   ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
@@ -971,7 +1206,7 @@ function renderStackView(id, { preserveScroll = false } = {}) {
             </div>`;
       }).join('');
       html += `
-        <div class="stack-verse-card" data-idx="${idx}">
+        <div class="stack-verse-card${isActiveCard ? ' action-active' : ''}" data-idx="${idx}">
           <div class="stack-verse-card-header">
             <span class="stack-verse-ref">${escHtml(cardRef)}</span>
             <button class="remove-verse-btn" data-idx="${idx}" title="Remove card">×</button>
@@ -994,6 +1229,8 @@ function renderStackView(id, { preserveScroll = false } = {}) {
 
   html += `</div>`;
   verseArea.innerHTML = html;
+  syncStackCompareRows();
+  updateStackCompareBar();
   if (preserveScroll) {
     const restoreScroll = () => { verseArea.scrollTop = scrollTop; };
     requestAnimationFrame(() => {
@@ -1245,6 +1482,7 @@ function deleteStack(id) {
   const stacks = loadStacks().filter(s => s.id !== id);
   saveStacks(stacks);
   activeStackId = null;
+  clearStackCompareMode();
   if (stacks.length > 0) {
     openStack(stacks[0].id);
   } else {
@@ -1259,6 +1497,7 @@ function removeVerseFromStack(stackId, idx) {
   if (!stack) return;
   stack.verses.splice(idx, 1);
   saveStacks(stacks);
+  clearStackCompareMode();
   renderStackView(stackId);
   renderStacksList();
 }
@@ -1305,8 +1544,8 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
   verseArea.addEventListener('touchstart', e => {
     if (isDragging) return;
     const card = e.target.closest('.stack-verse-card');
-    if (!card || e.target.closest('input, button, textarea, a')) return;
-    if (appMode !== 'stacks' || !activeStackId) return;
+    if (!card || e.target.closest('input, button, textarea, a, .stack-verse-row')) return;
+    if (appMode !== 'stacks' || !activeStackId || stackCompareMode) return;
     const touch = e.touches[0];
     startY = touch.clientY;
     longPressTimer = setTimeout(() => {
