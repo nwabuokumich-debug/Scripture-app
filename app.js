@@ -358,6 +358,27 @@ const compareBackdrop = document.getElementById('compare-backdrop');
 const compareSheet    = document.getElementById('compare-sheet');
 const compareRef      = document.getElementById('compare-ref');
 const compareBody     = document.getElementById('compare-body');
+
+function sortVersesForCompare(verses) {
+  return [...verses].sort((a, b) => {
+    if (a.book !== b.book) return a.book.localeCompare(b.book);
+    if (a.chapter !== b.chapter) return a.chapter - b.chapter;
+    return a.verse - b.verse;
+  });
+}
+
+function renderCompareTranslationRows(byTranslation) {
+  return Object.entries(TRANSLATIONS).map(([key, label]) => {
+    const text = byTranslation[key];
+    if (!text) return '';
+    return `
+      <div class="compare-row">
+        <div class="compare-label">${label}</div>
+        <div class="compare-text">${escHtml(text)}</div>
+      </div>`;
+  }).join('');
+}
+
 function closeCompare() {
   compareBackdrop.classList.remove('open');
   setTimeout(() => compareBackdrop.classList.add('hidden'), 380);
@@ -381,17 +402,47 @@ async function openCompare(ref, bookId, chapter, verse) {
     return;
   }
 
-  // Build a map for quick lookup, then render in TRANSLATIONS order
   const byTranslation = Object.fromEntries(data.map(r => [r.translation, r.text]));
-  compareBody.innerHTML = Object.entries(TRANSLATIONS).map(([key, label]) => {
-    const text = byTranslation[key];
-    if (!text) return '';
-    return `
-      <div class="compare-row">
-        <div class="compare-label">${label}</div>
-        <div class="compare-text">${escHtml(text)}</div>
-      </div>`;
-  }).join('');
+  compareBody.innerHTML = renderCompareTranslationRows(byTranslation);
+}
+
+async function openCompareSelectedVerses(verses) {
+  const sorted = sortVersesForCompare(verses);
+  if (!sorted.length) return;
+
+  compareRef.textContent = buildCombinedVerseData(sorted).ref;
+  compareBody.innerHTML = '<div class="compare-loading"><span class="spinner"></span> Loading…</div>';
+  compareBackdrop.classList.remove('hidden');
+  requestAnimationFrame(() => compareBackdrop.classList.add('open'));
+
+  const sections = await Promise.all(sorted.map(async verse => {
+    const book = allBooks.find(b => b.name === verse.book) ?? activeBook;
+    if (!book) {
+      return { ref: verse.ref, rows: '' };
+    }
+
+    const { data, error } = await supabase
+      .from('verses')
+      .select('translation, text')
+      .eq('book_id', book.id)
+      .eq('chapter', verse.chapter)
+      .eq('verse', verse.verse)
+      .order('translation');
+
+    if (error || !data?.length) {
+      return { ref: verse.ref, rows: '<div class="compare-loading">No data found.</div>' };
+    }
+
+    const byTranslation = Object.fromEntries(data.map(r => [r.translation, r.text]));
+    return { ref: verse.ref, rows: renderCompareTranslationRows(byTranslation) };
+  }));
+
+  compareBody.innerHTML = sections.map(section => `
+    <section class="compare-section">
+      <div class="compare-section-ref">${escHtml(section.ref)}</div>
+      ${section.rows}
+    </section>
+  `).join('');
 }
 
 // ── Verse click → Greek page ───────────────────────────
@@ -1478,6 +1529,10 @@ function updateSelectionBar() {
     });
     bar.querySelectorAll('.sel-secondary-btn')[1].addEventListener('click', e => {
       e.stopPropagation();
+      if (selectedVerses.length > 1) {
+        openCompareSelectedVerses(selectedVerses);
+        return;
+      }
       if (!activeVerse) return;
       openCompare(`${activeVerse.book} ${activeVerse.chapter}:${activeVerse.verse}`, activeBook.id, activeVerse.chapter, activeVerse.verse);
     });
