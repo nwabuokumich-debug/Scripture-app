@@ -400,6 +400,7 @@ function renderComparePassageRows(rows, anchor) {
 function closeCompare() {
   compareBackdrop.classList.remove('open');
   setTimeout(() => compareBackdrop.classList.add('hidden'), 380);
+  if (stackCompareMode) clearStackCompareMode();
 }
 document.getElementById('compare-close').addEventListener('click', closeCompare);
 compareBackdrop.addEventListener('click', e => { if (e.target === compareBackdrop) closeCompare(); });
@@ -599,6 +600,7 @@ function toggleStackComparePassage(cardIdx, passageRef) {
 async function openActiveStackCompare() {
   const verses = getActiveStackComparePassages();
   if (!verses.length) return;
+  dismissStackCompareBar();
   await openCompareSelectedVerses(verses);
 }
 
