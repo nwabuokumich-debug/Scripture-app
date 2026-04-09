@@ -1154,7 +1154,7 @@ function renderStackView(id, { preserveScroll = false } = {}) {
           <div class="stack-card-actions">
             <button class="add-passage-btn" data-idx="${idx}" title="Add scripture">＋</button>
             <button class="note-toggle" data-idx="${idx}" title="Note">✎</button>
-            <button class="compare-card-btn" data-idx="${idx}" title="Compare translations">⇄</button>
+            <button class="compare-card-btn" data-idx="${idx}" title="Compare translations">⟷</button>
             <button class="card-translation-btn" data-idx="${idx}" title="Switch translation">${TRANSLATIONS[cardTranslations.get(idx) || 'kjv']}</button>
           </div>
           <div class="add-passage-area hidden">

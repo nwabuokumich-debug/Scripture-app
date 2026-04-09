@@ -339,6 +339,8 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
 .add-passage-result-text { font-size: 0.8rem; color: var(--text-sec); line-height: 1.4; }
 .note-toggle { background: none; border: 1px solid var(--border); color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 1; transition: all 0.12s; }
 .note-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.compare-card-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 1; transition: all 0.12s; }
+.compare-card-btn:hover { color: var(--accent); border-color: var(--accent); }
 .stack-note { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text-sec); font-family: var(--font-ui); font-size: 0.83rem; line-height: 1.7; padding: 10px 12px; resize: vertical; min-height: 64px; outline: none; transition: border-color 0.2s; }
 .stack-note:focus { border-color: var(--accent); }
 .stack-note::placeholder { color: var(--text-muted); }
@@ -766,7 +768,7 @@ body.theme-dark {
   .stack-passage-ref-label { font-size: 0.75rem; }
   .remove-verse-btn { font-size: 1.3rem; padding: 4px 6px; }
   .remove-passage-btn { font-size: 1rem; padding: 4px 6px; }
-  .add-passage-btn, .note-toggle { font-size: 1.1rem; padding: 6px 10px; }
+  .add-passage-btn, .note-toggle, .compare-card-btn { font-size: 1.1rem; padding: 6px 10px; }
   .stack-note { font-size: 0.95rem; padding: 12px 14px; min-height: 80px; }
   .stack-add-input { font-size: 1rem; padding: 12px 14px; }
   .stack-add-search-btn { font-size: 0.95rem; padding: 12px 20px; }
