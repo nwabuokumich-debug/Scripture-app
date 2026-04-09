@@ -1483,7 +1483,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
   verseArea.addEventListener('touchstart', e => {
     if (isDragging) return;
     const card = e.target.closest('.stack-verse-card');
-    if (!card || e.target.closest('input, button, textarea, a, .stack-verse-row')) return;
+    if (!card || e.target.closest('input, button, textarea, a')) return;
     if (appMode !== 'stacks' || !activeStackId || stackCompareMode) return;
     const touch = e.touches[0];
     startY = touch.clientY;
