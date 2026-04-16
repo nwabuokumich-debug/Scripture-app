@@ -42,6 +42,32 @@ const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 
 if (!TRANSLATIONS[activeTranslation]) { activeTranslation = 'kjv'; localStorage.setItem('active_translation', 'kjv'); }
 const cardTranslations = new Map(); // idx → translation override for stack cards
 
+function triggerHaptic(pattern = 16) {
+  // Prefer native haptics when running inside a Capacitor shell (iOS/Android app).
+  try {
+    const haptics = window?.Capacitor?.Plugins?.Haptics;
+    if (haptics?.impact) {
+      haptics.impact({ style: 'MEDIUM' });
+      return true;
+    }
+    if (haptics?.vibrate) {
+      const duration = Array.isArray(pattern)
+        ? pattern.reduce((sum, ms) => sum + (Number(ms) || 0), 0)
+        : (Number(pattern) || 16);
+      haptics.vibrate({ duration: Math.max(1, Math.min(500, duration)) });
+      return true;
+    }
+  } catch {}
+
+  try {
+    if (typeof navigator.vibrate === 'function') {
+      navigator.vibrate(pattern);
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
 // ── Sidebar toggle ────────────────────────────────────
 const appEl = document.querySelector('.app');
 
@@ -735,7 +761,7 @@ verseArea.addEventListener('touchstart', e => {
     }
     startVerseActionMode(verseData, row);
     suppressVerseTapUntil = Date.now() + 450;
-    navigator.vibrate?.(12);
+    triggerHaptic([14, 22, 14]);
     clearPress();
   }, 380);
 
@@ -1513,7 +1539,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
         c.style.opacity = '0.6';
       });
 
-      navigator.vibrate?.(20);
+      triggerHaptic(20);
     }, 400);
   }, { passive: true });
 
