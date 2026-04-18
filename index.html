@@ -135,17 +135,20 @@
   </div>
 
   <div id="book-sheet-backdrop" class="sheet-backdrop hidden">
-    <div class="sheet">
+    <div class="sheet book-sheet">
       <div class="sheet-handle"></div>
-      <div class="sheet-header">
-        <div class="sheet-title">Choose Book</div>
-        <button id="book-sheet-close" class="sheet-close" type="button">×</button>
-      </div>
-      <div class="segmented">
-        <button id="tab-ot" class="seg active" type="button">Old</button>
-        <button id="tab-nt" class="seg" type="button">New</button>
+      <div class="book-sheet-header">
+        <button id="book-sheet-close" class="sheet-text-btn" type="button">Cancel</button>
+        <div id="book-sheet-title" class="sheet-title">Books</div>
+        <button id="book-sheet-history" class="sheet-text-btn" type="button">History</button>
       </div>
       <div id="book-list" class="book-list"></div>
+      <div class="book-sheet-footer">
+        <div class="segmented book-order-seg">
+          <button id="book-order-traditional" class="seg active" type="button">Traditional</button>
+          <button id="book-order-alpha" class="seg" type="button">Alphabetical</button>
+        </div>
+      </div>
     </div>
   </div>
 
