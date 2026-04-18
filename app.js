@@ -24,6 +24,7 @@ const otTab              = document.getElementById('tab-ot');
 const ntTab              = document.getElementById('tab-nt');
 const navBible           = document.getElementById('nav-bible');
 const navStacks          = document.getElementById('nav-stacks');
+const bottomNav          = document.querySelector('.bottom-nav');
 const newStackBtn        = document.getElementById('new-stack-btn');
 const translationLabel   = document.getElementById('translation-label');
 const bookPickerBtn      = document.getElementById('book-picker-btn');
@@ -57,6 +58,7 @@ let stackCompareSelectedRefs = [];
 let bookOrderMode   = localStorage.getItem('book_order_mode') || 'traditional';
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 'UKJV', mkjv: 'MKJV', litv: 'LITV', cpdv: 'CPDV', darby: 'Darby', webster: 'Webster', dra: 'DRA', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
+const chromeScrollState = new WeakMap();
 // Migrate away from removed translations
 if (!TRANSLATIONS[activeTranslation]) { activeTranslation = 'kjv'; localStorage.setItem('active_translation', 'kjv'); }
 if (!['traditional', 'alphabetical'].includes(bookOrderMode)) bookOrderMode = 'traditional';
@@ -98,7 +100,87 @@ function closeSheet(backdrop) {
   setTimeout(() => backdrop.classList.add('hidden'), 380);
 }
 
+function syncBottomNavChrome() {
+  const collapsed = appMode === 'stacks'
+    ? stacksPane.classList.contains('chrome-collapsed')
+    : biblePane.classList.contains('chrome-collapsed');
+  bottomNav.classList.toggle('chrome-collapsed', collapsed);
+}
+
+function setPaneChromeCollapsed(pane, collapsed) {
+  pane.classList.toggle('chrome-collapsed', collapsed);
+  if ((pane === biblePane && appMode === 'bible') || (pane === stacksPane && appMode === 'stacks')) {
+    syncBottomNavChrome();
+  }
+}
+
+function showPaneChrome(pane) {
+  setPaneChromeCollapsed(pane, false);
+}
+
+function showActivePaneChrome() {
+  showPaneChrome(appMode === 'stacks' ? stacksPane : biblePane);
+}
+
+function resetChromeScroll(container, pane) {
+  const state = chromeScrollState.get(container);
+  if (state) {
+    state.lastTop = container.scrollTop;
+    state.lastDirection = '';
+    state.distance = 0;
+  }
+  showPaneChrome(pane);
+}
+
+function bindPaneChromeScroll(container, pane, { minScrollTop = 72, hideDistance = 36, showDistance = 18 } = {}) {
+  const state = { lastTop: 0, lastDirection: '', distance: 0, ticking: false };
+  chromeScrollState.set(container, state);
+
+  container.addEventListener('scroll', () => {
+    if (state.ticking) return;
+    state.ticking = true;
+
+    requestAnimationFrame(() => {
+      state.ticking = false;
+
+      const top = container.scrollTop;
+      const delta = top - state.lastTop;
+
+      if (top <= 8) {
+        state.lastTop = top;
+        state.lastDirection = '';
+        state.distance = 0;
+        showPaneChrome(pane);
+        return;
+      }
+
+      if (Math.abs(delta) < 2) {
+        state.lastTop = top;
+        return;
+      }
+
+      const direction = delta > 0 ? 'down' : 'up';
+      if (direction !== state.lastDirection) {
+        state.lastDirection = direction;
+        state.distance = 0;
+      }
+      state.distance += Math.abs(delta);
+
+      if (direction === 'down' && top >= minScrollTop && state.distance >= hideDistance) {
+        setPaneChromeCollapsed(pane, true);
+        state.distance = 0;
+      } else if (direction === 'up' && state.distance >= showDistance) {
+        showPaneChrome(pane);
+        state.distance = 0;
+      }
+
+      state.lastTop = top;
+    });
+  }, { passive: true });
+}
+
 function openBookSheet() {
+  showPaneChrome(biblePane);
   syncBookOrderTabs();
   renderBookList();
   resetBookSheetInlineMotion();
@@ -113,6 +195,7 @@ function closeBookSheet() {
 }
 
 function openSearchSheet() {
+  showPaneChrome(biblePane);
   openSheet(searchSheetBackdrop);
   setTimeout(() => searchInput.focus(), 60);
 }
@@ -255,6 +338,7 @@ searchOpenBtn.addEventListener('click', openSearchSheet);
 let activeTranslationPicker = null;
 
 function openTranslationPicker(anchorEl, currentKey, onSelect) {
+  showPaneChrome(biblePane);
   closeTranslationPicker();
   const picker = document.createElement('div');
   picker.className = 'translation-picker';
@@ -683,6 +767,7 @@ function renderVerses(verses) {
   verseArea.innerHTML = html;
 
   bibleContent.scrollTop = 0;
+  resetChromeScroll(bibleContent, biblePane);
 }
 
 // ── Compare translations ───────────────────────────────
@@ -1293,6 +1378,7 @@ function showWelcome() {
   verseArea.querySelector('#welcome-book-btn')?.addEventListener('click', openBookSheet);
   verseArea.querySelector('#welcome-search-btn')?.addEventListener('click', openSearchSheet);
   bibleContent.scrollTop = 0;
+  resetChromeScroll(bibleContent, biblePane);
 }
 
 // ── Book order tabs ───────────────────────────────────
@@ -1352,8 +1438,10 @@ function setMode(mode) {
   closeSearchSheet();
   closeTranslationPicker();
   updateNavState();
+  syncBottomNavChrome();
 
   if (mode === 'stacks') {
+    resetChromeScroll(stacksContent, stacksPane);
     clearSelection();
     renderStacksSummary();
     renderStacksList();
@@ -1368,6 +1456,7 @@ function setMode(mode) {
     return;
   }
 
+  resetChromeScroll(bibleContent, biblePane);
   clearStackCompareMode();
   updateBibleChrome();
   renderBookList();
@@ -1407,6 +1496,7 @@ function openStack(id) {
     clearStackCompareMode();
   }
   activeStackId = id;
+  resetChromeScroll(stacksContent, stacksPane);
   renderStacksSummary();
   renderStacksList();
   renderStackView(id, { resetScroll: true });
@@ -2317,6 +2407,7 @@ settingsBackdrop.addEventListener('click', closeSettings);
 
 settingsBtn.addEventListener('click', e => {
   e.stopPropagation();
+  showPaneChrome(biblePane);
   const isOpen = !settingsPanel.classList.contains('hidden');
   if (isOpen) {
     settingsPanel.classList.add('hidden');
@@ -2370,6 +2461,11 @@ document.querySelectorAll('.sp-spacing-btn').forEach(btn => {
 
 // ── Apply on boot ─────────────────────────────────────
 applySettings(loadSettings());
+bindPaneChromeScroll(bibleContent, biblePane, { minScrollTop: 84, hideDistance: 42, showDistance: 16 });
+bindPaneChromeScroll(stacksContent, stacksPane, { minScrollTop: 64, hideDistance: 36, showDistance: 16 });
+resetChromeScroll(bibleContent, biblePane);
+resetChromeScroll(stacksContent, stacksPane);
+syncBottomNavChrome();
 
 // ── Start ─────────────────────────────────────────────
 init();

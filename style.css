@@ -65,7 +65,7 @@ body::before {
   visibility: hidden;
   pointer-events: none;
   transform: translateY(18px);
-  transition: opacity 0.28s ease, transform 0.34s cubic-bezier(0.32, 0.72, 0.18, 1), visibility 0.28s;
+  transition: opacity 0.28s ease, transform 0.34s cubic-bezier(0.32, 0.72, 0.18, 1), visibility 0.28s, padding-bottom 0.3s cubic-bezier(0.22, 1, 0.36, 1);
   overflow: hidden;
 }
 .pane.is-active {
@@ -74,6 +74,7 @@ body::before {
   pointer-events: auto;
   transform: translateY(0);
 }
+.pane.chrome-collapsed { padding-bottom: 0; }
 
 /* ── Top bar ──────────────────────────────── */
 .top-bar {
@@ -82,6 +83,15 @@ body::before {
   background: var(--bg);
   flex-shrink: 0;
   position: relative; z-index: 10;
+  max-height: 160px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    max-height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.22s ease,
+    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .top-bar-main {
@@ -109,6 +119,7 @@ body::before {
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 8px;
+  max-height: 104px;
 }
 
 .stacks-pane-title {
@@ -220,6 +231,14 @@ body::before {
   padding: 0 16px 14px;
   overflow-x: auto; flex-wrap: nowrap; flex-shrink: 0;
   -webkit-overflow-scrolling: touch;
+  max-height: 68px;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    max-height 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.2s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .chapter-bar::-webkit-scrollbar { display: none; }
 .chapter-bar:empty { padding: 0; }
@@ -350,6 +369,17 @@ body::before {
   -webkit-backdrop-filter: saturate(180%) blur(22px);
   border-top: 1px solid var(--border);
   padding: 6px 8px max(8px, env(safe-area-inset-bottom));
+  transform: translateY(0);
+  opacity: 1;
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.22s ease,
+    background 0.2s ease;
+}
+.bottom-nav.chrome-collapsed {
+  transform: translateY(calc(100% + env(safe-area-inset-bottom)));
+  opacity: 0;
+  pointer-events: none;
 }
 .nav-item {
   flex: 1; background: none; border: none;
@@ -371,6 +401,24 @@ body::before {
 .nav-item.active .nav-ico-outline { display: none; }
 .nav-item.active .nav-ico-filled { display: block; }
 .nav-item.active .nav-label { font-weight: 800; }
+
+.pane.chrome-collapsed .top-bar {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  transform: translateY(-18px);
+  pointer-events: none;
+}
+
+.pane.chrome-collapsed .chapter-bar {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  transform: translateY(-12px);
+  pointer-events: none;
+}
 
 /* ── Sheets ───────────────────────────────── */
 .sheet-backdrop {
