@@ -101,16 +101,14 @@ function closeSheet(backdrop) {
 function openBookSheet() {
   syncBookOrderTabs();
   renderBookList();
-  bookSheet.style.transform = '';
+  resetBookSheetInlineMotion();
   bookSheet.classList.remove('dragging');
-  bookSheetBackdrop.style.background = '';
   openSheet(bookSheetBackdrop);
 }
 
 function closeBookSheet() {
-  bookSheet.style.transform = '';
+  resetBookSheetInlineMotion();
   bookSheet.classList.remove('dragging');
-  bookSheetBackdrop.style.background = '';
   closeSheet(bookSheetBackdrop);
 }
 
@@ -121,6 +119,60 @@ function openSearchSheet() {
 
 function closeSearchSheet() {
   closeSheet(searchSheetBackdrop);
+}
+
+const BOOK_SHEET_BACKDROP_OPACITY = 0.42;
+const BOOK_SHEET_SNAP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+const BOOK_SHEET_MIN_SNAP_MS = 220;
+const BOOK_SHEET_MAX_SNAP_MS = 420;
+
+function getBookSheetTravel() {
+  return Math.max(bookSheet.getBoundingClientRect().height || 0, 320);
+}
+
+function setBookSheetOffset(offsetY) {
+  const travel = getBookSheetTravel();
+  const clamped = Math.max(0, offsetY);
+  const progress = Math.min(clamped / travel, 1);
+  bookSheet.style.transform = `translateY(${clamped}px)`;
+  bookSheetBackdrop.style.background = `rgba(12,12,18,${BOOK_SHEET_BACKDROP_OPACITY * (1 - progress)})`;
+}
+
+function resetBookSheetInlineMotion() {
+  bookSheet.style.transform = '';
+  bookSheet.style.transition = '';
+  bookSheetBackdrop.style.background = '';
+  bookSheetBackdrop.style.transition = '';
+}
+
+function finishBookSheetCloseImmediately() {
+  resetBookSheetInlineMotion();
+  bookSheet.classList.remove('dragging');
+  bookSheetBackdrop.classList.remove('open');
+  bookSheetBackdrop.classList.add('hidden');
+}
+
+function snapBookSheetTo(offsetY, onComplete) {
+  const currentOffset = Math.max(0, dragYForBookSheet());
+  const distance = Math.abs(offsetY - currentOffset);
+  const duration = Math.round(Math.max(
+    BOOK_SHEET_MIN_SNAP_MS,
+    Math.min(BOOK_SHEET_MAX_SNAP_MS, 240 + distance * 0.32)
+  ));
+
+  bookSheet.style.transition = `transform ${duration}ms ${BOOK_SHEET_SNAP_EASING}`;
+  bookSheetBackdrop.style.transition = `background ${duration}ms ${BOOK_SHEET_SNAP_EASING}`;
+
+  requestAnimationFrame(() => setBookSheetOffset(offsetY));
+
+  return window.setTimeout(() => {
+    onComplete?.();
+  }, duration);
+}
+
+function dragYForBookSheet() {
+  const match = bookSheet.style.transform.match(/translateY\(([-\d.]+)px\)/);
+  return match ? Number(match[1]) : 0;
 }
 
 bookSheetClose?.addEventListener('click', closeBookSheet);
@@ -148,40 +200,63 @@ searchOpenBtn.addEventListener('click', openSearchSheet);
   let startY = 0;
   let dragY = 0;
   let dragging = false;
+  let lastTouchY = 0;
+  let lastTouchTime = 0;
+  let velocityY = 0;
+  let snapTimer = null;
 
   bookSheetDragZone.addEventListener('touchstart', e => {
     if (bookSheetBackdrop.classList.contains('hidden')) return;
     if (e.touches.length !== 1) return;
+    if (snapTimer) {
+      clearTimeout(snapTimer);
+      snapTimer = null;
+    }
     dragging = true;
     startY = e.touches[0].clientY;
     dragY = 0;
+    lastTouchY = startY;
+    lastTouchTime = performance.now();
+    velocityY = 0;
+    bookSheet.style.transition = 'none';
+    bookSheetBackdrop.style.transition = 'none';
     bookSheet.classList.add('dragging');
   }, { passive: true });
 
   bookSheetDragZone.addEventListener('touchmove', e => {
     if (!dragging) return;
-    const nextY = Math.max(0, e.touches[0].clientY - startY);
+    const touchY = e.touches[0].clientY;
+    const rawY = Math.max(0, touchY - startY);
+    const travel = getBookSheetTravel();
+    const overshoot = Math.max(0, rawY - travel);
+    const nextY = overshoot > 0 ? travel + overshoot * 0.18 : rawY;
+    const now = performance.now();
+    const dt = Math.max(1, now - lastTouchTime);
+
+    velocityY = (touchY - lastTouchY) / dt;
+    lastTouchY = touchY;
+    lastTouchTime = now;
     dragY = nextY;
-    bookSheet.style.transform = `translateY(${nextY}px)`;
-    const opacity = Math.max(0.14, 0.42 - (nextY / 340) * 0.28);
-    bookSheetBackdrop.style.background = `rgba(12,12,18,${opacity})`;
+    setBookSheetOffset(nextY);
   }, { passive: true });
 
   function finishBookSheetDrag(shouldClose) {
     if (!dragging) return;
     dragging = false;
+    const travel = getBookSheetTravel();
+    const projectedY = dragY + Math.max(0, velocityY) * 180;
+    const shouldSnapClosed = shouldClose && projectedY >= travel / 2;
 
-    if (shouldClose && dragY > 72) {
-      bookSheet.classList.remove('dragging');
-      bookSheet.style.transform = '';
-      bookSheetBackdrop.style.background = '';
-      closeBookSheet();
-      return;
-    }
+    if (snapTimer) clearTimeout(snapTimer);
 
-    bookSheet.style.transform = '';
-    bookSheetBackdrop.style.background = '';
-    requestAnimationFrame(() => bookSheet.classList.remove('dragging'));
+    snapTimer = snapBookSheetTo(shouldSnapClosed ? travel : 0, () => {
+      snapTimer = null;
+      if (shouldSnapClosed) finishBookSheetCloseImmediately();
+      else {
+        resetBookSheetInlineMotion();
+        bookSheet.classList.remove('dragging');
+      }
+    });
   }
 
   bookSheetDragZone.addEventListener('touchend', () => finishBookSheetDrag(true), { passive: true });
