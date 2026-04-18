@@ -30,8 +30,10 @@ const bookPickerBtn      = document.getElementById('book-picker-btn');
 const bookChipTitle      = document.getElementById('book-chip-title');
 const bookChipSub        = document.getElementById('book-chip-sub');
 const bookSheetBackdrop  = document.getElementById('book-sheet-backdrop');
+const bookSheet          = document.getElementById('book-sheet');
 const bookSheetClose     = document.getElementById('book-sheet-close');
 const bookSheetDone      = document.getElementById('book-sheet-done');
+const bookSheetDragZone  = document.getElementById('book-sheet-drag-zone');
 const searchSheetBackdrop = document.getElementById('search-sheet-backdrop');
 
 // ── State ─────────────────────────────────────────────
@@ -100,10 +102,16 @@ function closeSheet(backdrop) {
 function openBookSheet() {
   syncBookOrderTabs();
   renderBookList();
+  bookSheet.style.transform = '';
+  bookSheet.classList.remove('dragging');
+  bookSheetBackdrop.style.background = '';
   openSheet(bookSheetBackdrop);
 }
 
 function closeBookSheet() {
+  bookSheet.style.transform = '';
+  bookSheet.classList.remove('dragging');
+  bookSheetBackdrop.style.background = '';
   closeSheet(bookSheetBackdrop);
 }
 
@@ -136,6 +144,51 @@ document.addEventListener('keydown', e => {
 });
 bookPickerBtn.addEventListener('click', openBookSheet);
 searchOpenBtn.addEventListener('click', openSearchSheet);
+
+// Native-feeling pull-down dismiss for the books sheet.
+{
+  let startY = 0;
+  let dragY = 0;
+  let dragging = false;
+
+  bookSheetDragZone.addEventListener('touchstart', e => {
+    if (bookSheetBackdrop.classList.contains('hidden')) return;
+    if (e.touches.length !== 1) return;
+    dragging = true;
+    startY = e.touches[0].clientY;
+    dragY = 0;
+    bookSheet.classList.add('dragging');
+  }, { passive: true });
+
+  bookSheetDragZone.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    const nextY = Math.max(0, e.touches[0].clientY - startY);
+    dragY = nextY;
+    bookSheet.style.transform = `translateY(${nextY}px)`;
+    const opacity = Math.max(0.14, 0.42 - (nextY / 340) * 0.28);
+    bookSheetBackdrop.style.background = `rgba(12,12,18,${opacity})`;
+  }, { passive: true });
+
+  function finishBookSheetDrag(shouldClose) {
+    if (!dragging) return;
+    dragging = false;
+
+    if (shouldClose && dragY > 72) {
+      bookSheet.classList.remove('dragging');
+      bookSheet.style.transform = '';
+      bookSheetBackdrop.style.background = '';
+      closeBookSheet();
+      return;
+    }
+
+    bookSheet.style.transform = '';
+    bookSheetBackdrop.style.background = '';
+    requestAnimationFrame(() => bookSheet.classList.remove('dragging'));
+  }
+
+  bookSheetDragZone.addEventListener('touchend', () => finishBookSheetDrag(true), { passive: true });
+  bookSheetDragZone.addEventListener('touchcancel', () => finishBookSheetDrag(false), { passive: true });
+}
 
 // ── Translation picker ────────────────────────────────
 let activeTranslationPicker = null;

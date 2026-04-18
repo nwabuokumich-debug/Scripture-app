@@ -394,6 +394,13 @@ body::before {
 }
 .sheet-backdrop.open .sheet { transform: translateY(0); }
 .book-sheet { max-height: 92vh; }
+.book-sheet.dragging {
+  transition: none;
+}
+.book-sheet-drag-zone {
+  flex-shrink: 0;
+  touch-action: none;
+}
 .sheet-handle {
   width: 40px; height: 4px;
   background: var(--border2); border-radius: 99px;
