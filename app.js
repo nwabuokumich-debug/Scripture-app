@@ -123,8 +123,8 @@ function closeSearchSheet() {
 
 const BOOK_SHEET_BACKDROP_OPACITY = 0.42;
 const BOOK_SHEET_SNAP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
-const BOOK_SHEET_MIN_SNAP_MS = 220;
-const BOOK_SHEET_MAX_SNAP_MS = 420;
+const BOOK_SHEET_MIN_SNAP_MS = 280;
+const BOOK_SHEET_MAX_SNAP_MS = 500;
 
 function getBookSheetTravel() {
   return Math.max(bookSheet.getBoundingClientRect().height || 0, 320);
@@ -157,7 +157,7 @@ function snapBookSheetTo(offsetY, onComplete) {
   const distance = Math.abs(offsetY - currentOffset);
   const duration = Math.round(Math.max(
     BOOK_SHEET_MIN_SNAP_MS,
-    Math.min(BOOK_SHEET_MAX_SNAP_MS, 240 + distance * 0.32)
+    Math.min(BOOK_SHEET_MAX_SNAP_MS, 280 + distance * 0.36)
   ));
 
   bookSheet.style.transition = `transform ${duration}ms ${BOOK_SHEET_SNAP_EASING}`;
