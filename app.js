@@ -123,7 +123,7 @@ function closeSearchSheet() {
   closeSheet(searchSheetBackdrop);
 }
 
-bookSheetClose.addEventListener('click', closeBookSheet);
+bookSheetClose?.addEventListener('click', closeBookSheet);
 bookSheetBackdrop.addEventListener('click', e => {
   if (e.target === bookSheetBackdrop) closeBookSheet();
 });
