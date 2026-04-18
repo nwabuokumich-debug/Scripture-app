@@ -13,52 +13,35 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bitter:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Inter:wght@300;400;500;600;700&family=Josefin+Sans:wght@300;400;600&family=Lato:ital,wght@0,400;0,700;1,400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Noto+Serif:ital,wght@0,400;0,700;1,400&family=Nunito:wght@400;500;600&family=Open+Sans:ital,wght@0,400;0,600;1,400&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Raleway:wght@400;500;600&family=Roboto:ital,wght@0,400;0,500;1,400&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=Spectral:ital,wght@0,400;0,500;1,400&family=Vollkorn:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=60" />
+  <link rel="stylesheet" href="style.css?v=61" />
 </head>
 <body>
 
   <div class="app">
-
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <div class="brand">
-          <div class="brand-icon">✦</div>
-          <div class="brand-text">
-            <h1>Scripture</h1>
-            <span id="translation-label" style="cursor:pointer;">KJV</span>
-          </div>
+    <main id="bible-pane" class="pane is-active" aria-hidden="false">
+      <header class="top-bar">
+        <div class="top-bar-main">
+          <button id="book-picker-btn" class="book-chip" type="button" title="Choose book">
+            <span class="book-chip-main">
+              <span id="book-chip-title" class="book-chip-title">Choose Book</span>
+              <span id="book-chip-sub" class="book-chip-sub">Old Testament</span>
+            </span>
+            <svg class="book-chip-caret" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="m5 7.5 5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button id="translation-label" class="top-translation" type="button">KJV</button>
         </div>
-        <button id="sidebar-close" class="sidebar-toggle" title="Close sidebar" style="font-size:1.5rem;padding:6px 12px;background:#f5f1ed;border-radius:8px;color:#1a1a1a;border:1px solid #d9d1c7;">✕</button>
-      </div>
-
-      <div class="sidebar-tabs">
-        <button id="tab-ot" class="stab active">Old</button>
-        <button id="tab-nt" class="stab">New</button>
-        <button id="tab-stacks" class="stab">Stacks</button>
-      </div>
-
-      <div id="book-list" class="book-list"></div>
-      <div id="stack-list" class="stack-list hidden"></div>
-
-      <div id="stacks-footer" class="stacks-footer hidden">
-        <button id="new-stack-btn">+ New Stack</button>
-      </div>
-    </aside>
-
-    <!-- Main -->
-    <div class="main-col">
-
-      <header>
-        <button id="sidebar-open" class="sidebar-open" title="Open sidebar">☰</button>
-        <div class="search-bar">
-          <svg class="search-icon" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/><path d="m14.5 14.5 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          <input id="search-input" type="text" placeholder="Search any word or phrase…" autocomplete="off" />
-          <button id="search-btn">Search</button>
+        <div class="top-bar-actions">
+          <button id="search-open" class="icon-btn" type="button" title="Search Bible">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.7"/>
+              <path d="m14 14 4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button id="settings-btn" class="icon-btn settings-btn" type="button" title="Reader settings">Aa</button>
         </div>
-        <button id="settings-btn" class="settings-btn" title="Reader settings">Aa</button>
 
-        <!-- Settings panel -->
         <div id="settings-panel" class="settings-panel hidden">
           <div class="sp-header">
             <span class="sp-title">Reader Settings</span>
@@ -67,8 +50,8 @@
           <div class="sp-section">
             <div class="sp-label">Theme</div>
             <div class="sp-row">
-              <button class="sp-theme-btn active" data-theme="light">☀ Light</button>
-              <button class="sp-theme-btn" data-theme="dark">☾ Dark</button>
+              <button class="sp-theme-btn active" data-theme="light">Light</button>
+              <button class="sp-theme-btn" data-theme="dark">Dark</button>
             </div>
           </div>
           <div class="sp-section">
@@ -97,13 +80,91 @@
 
       <div id="chapter-bar" class="chapter-bar"></div>
 
-      <div id="verse-area" class="verse-area">
-        <div class="state-msg">
-          <strong>Scripture Search</strong>
-          Select a book from the sidebar<br>or search for any keyword above
+      <div id="bible-content" class="content-area">
+        <div id="verse-area" class="verse-area">
+          <div class="state-msg">
+            <strong>Scripture</strong>
+            Choose a book to begin reading
+          </div>
         </div>
       </div>
+    </main>
 
+    <main id="stacks-pane" class="pane" aria-hidden="true">
+      <header class="top-bar stacks-top-bar">
+        <div class="pane-heading">
+          <div class="pane-kicker">Collections</div>
+          <h1 class="pane-title">Stacks</h1>
+          <p class="pane-subtitle">Save verses, gather passages, and keep notes in one place.</p>
+        </div>
+        <button id="new-stack-btn" class="primary-pill-btn" type="button">New Stack</button>
+      </header>
+
+      <div id="stacks-content" class="content-area">
+        <div class="stacks-shell">
+          <section id="stacks-summary" class="stacks-summary"></section>
+          <section id="stack-list" class="stack-rail"></section>
+          <section id="stack-detail" class="stack-detail"></section>
+        </div>
+      </div>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Primary">
+      <button id="nav-bible" class="nav-item active" type="button" aria-current="page">
+        <svg class="nav-ico nav-ico-outline" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M7 5.5C5.9 5.5 5 6.4 5 7.5v11c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v-11c0-1.1-.9-2-2-2H7Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M7 5.5v11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <svg class="nav-ico nav-ico-filled" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M6.8 4h10.4A2.8 2.8 0 0 1 20 6.8V19a.9.9 0 0 1-1.53.64A2.77 2.77 0 0 0 16.5 19h-9A2.5 2.5 0 0 0 5 21.5V6.8A2.8 2.8 0 0 1 7.8 4Z"/>
+        </svg>
+        <span class="nav-label">Bible</span>
+      </button>
+      <button id="nav-stacks" class="nav-item" type="button">
+        <svg class="nav-ico nav-ico-outline" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 4 4.5 8 12 12 19.5 8 12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M4.5 12 12 16l7.5-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4.5 16 12 20l7.5-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <svg class="nav-ico nav-ico-filled" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 3.8 3.6 8.2a1 1 0 0 0 0 1.76L12 14.2l8.4-4.24a1 1 0 0 0 0-1.76L12 3.8Zm-7.35 9.74L12 17.4l7.35-3.86 1.11.56a1 1 0 0 1 0 1.8L12 20.2l-8.46-4.3a1 1 0 0 1 0-1.8l1.11-.56Z"/>
+        </svg>
+        <span class="nav-label">Stacks</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="book-sheet-backdrop" class="sheet-backdrop hidden">
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <div class="sheet-title">Choose Book</div>
+        <button id="book-sheet-close" class="sheet-close" type="button">×</button>
+      </div>
+      <div class="segmented">
+        <button id="tab-ot" class="seg active" type="button">Old</button>
+        <button id="tab-nt" class="seg" type="button">New</button>
+      </div>
+      <div id="book-list" class="book-list"></div>
+    </div>
+  </div>
+
+  <div id="search-sheet-backdrop" class="sheet-backdrop hidden">
+    <div class="sheet search-sheet">
+      <div class="search-sheet-header">
+        <div class="search-pill">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/>
+            <path d="m14.5 14.5 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <input id="search-input" type="text" placeholder="Search words or enter a passage" autocomplete="off" />
+          <button id="search-btn" class="search-submit" type="button">Search</button>
+        </div>
+        <button id="search-close" class="search-cancel" type="button">Close</button>
+      </div>
+      <div id="search-results" class="search-results">
+        <div class="search-empty">Search within the selected translation or jump to a passage reference.</div>
+      </div>
     </div>
   </div>
 
@@ -139,7 +200,7 @@
       navigator.serviceWorker.register('sw.js');
     }
   </script>
-  <script type="module" src="app.js?v=59"></script>
+  <script type="module" src="app.js?v=60"></script>
 
 </body>
 </html>

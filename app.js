@@ -4,18 +4,34 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ── DOM refs ─────────────────────────────────────────
-const bookList     = document.getElementById('book-list');
-const chapterBar   = document.getElementById('chapter-bar');
-const verseArea    = document.getElementById('verse-area');
-const greekPage    = document.getElementById('greek-page');
-const searchInput  = document.getElementById('search-input');
-const searchBtn    = document.getElementById('search-btn');
-const otTab        = document.getElementById('tab-ot');
-const ntTab        = document.getElementById('tab-nt');
-const tabStacks    = document.getElementById('tab-stacks');
-const newStackBtn  = document.getElementById('new-stack-btn');
-const stackList    = document.getElementById('stack-list');
-const stacksFooter = document.getElementById('stacks-footer');
+const biblePane          = document.getElementById('bible-pane');
+const stacksPane         = document.getElementById('stacks-pane');
+const bibleContent       = document.getElementById('bible-content');
+const stacksContent      = document.getElementById('stacks-content');
+const verseArea          = document.getElementById('verse-area');
+const chapterBar         = document.getElementById('chapter-bar');
+const bookList           = document.getElementById('book-list');
+const stackList          = document.getElementById('stack-list');
+const stackDetail        = document.getElementById('stack-detail');
+const stacksSummary      = document.getElementById('stacks-summary');
+const greekPage          = document.getElementById('greek-page');
+const searchInput        = document.getElementById('search-input');
+const searchBtn          = document.getElementById('search-btn');
+const searchOpenBtn      = document.getElementById('search-open');
+const searchCloseBtn     = document.getElementById('search-close');
+const searchResults      = document.getElementById('search-results');
+const otTab              = document.getElementById('tab-ot');
+const ntTab              = document.getElementById('tab-nt');
+const navBible           = document.getElementById('nav-bible');
+const navStacks          = document.getElementById('nav-stacks');
+const newStackBtn        = document.getElementById('new-stack-btn');
+const translationLabel   = document.getElementById('translation-label');
+const bookPickerBtn      = document.getElementById('book-picker-btn');
+const bookChipTitle      = document.getElementById('book-chip-title');
+const bookChipSub        = document.getElementById('book-chip-sub');
+const bookSheetBackdrop  = document.getElementById('book-sheet-backdrop');
+const bookSheetClose     = document.getElementById('book-sheet-close');
+const searchSheetBackdrop = document.getElementById('search-sheet-backdrop');
 
 // ── State ─────────────────────────────────────────────
 let allBooks        = [];
@@ -68,32 +84,44 @@ function triggerHaptic(pattern = 16) {
   return false;
 }
 
-// ── Sidebar toggle ────────────────────────────────────
-const appEl = document.querySelector('.app');
+function openSheet(backdrop) {
+  backdrop.classList.remove('hidden');
+  requestAnimationFrame(() => backdrop.classList.add('open'));
+}
 
-const backdrop = document.createElement('div');
-backdrop.className = 'sidebar-backdrop';
-appEl.appendChild(backdrop);
+function closeSheet(backdrop) {
+  backdrop.classList.remove('open');
+  setTimeout(() => backdrop.classList.add('hidden'), 380);
+}
 
-function openSidebar()  { appEl.classList.add('sidebar-open'); appEl.classList.remove('sidebar-hidden'); }
-function closeSidebar() { appEl.classList.remove('sidebar-open'); appEl.classList.add('sidebar-hidden'); }
+function openBookSheet() {
+  renderBookList();
+  openSheet(bookSheetBackdrop);
+}
 
-document.getElementById('sidebar-close').addEventListener('click', closeSidebar);
-document.getElementById('sidebar-open').addEventListener('click', openSidebar);
-backdrop.addEventListener('click', closeSidebar);
+function closeBookSheet() {
+  closeSheet(bookSheetBackdrop);
+}
 
-// Close sidebar when tapping anywhere outside it
-document.addEventListener('click', function(e) {
-  if (!appEl.classList.contains('sidebar-open')) return;
-  const sidebar = document.querySelector('.sidebar');
-  const openBtn = document.getElementById('sidebar-open');
-  if (!sidebar.contains(e.target) && !openBtn.contains(e.target)) {
-    closeSidebar();
-  }
+function openSearchSheet() {
+  openSheet(searchSheetBackdrop);
+  setTimeout(() => searchInput.focus(), 60);
+}
+
+function closeSearchSheet() {
+  closeSheet(searchSheetBackdrop);
+}
+
+bookSheetClose.addEventListener('click', closeBookSheet);
+bookSheetBackdrop.addEventListener('click', e => {
+  if (e.target === bookSheetBackdrop) closeBookSheet();
 });
-
-// On mobile, start with sidebar closed
-if (window.innerWidth <= 680) closeSidebar();
+searchCloseBtn.addEventListener('click', closeSearchSheet);
+searchSheetBackdrop.addEventListener('click', e => {
+  if (e.target === searchSheetBackdrop) closeSearchSheet();
+});
+bookPickerBtn.addEventListener('click', openBookSheet);
+searchOpenBtn.addEventListener('click', openSearchSheet);
 
 // ── Translation picker ────────────────────────────────
 let activeTranslationPicker = null;
@@ -130,7 +158,6 @@ function closeTranslationPicker() {
   setTimeout(() => picker.remove(), 380);
 }
 
-const translationLabel = document.getElementById('translation-label');
 translationLabel.textContent = TRANSLATIONS[activeTranslation] || activeTranslation.toUpperCase();
 translationLabel.addEventListener('click', e => {
   e.stopPropagation();
@@ -139,7 +166,8 @@ translationLabel.addEventListener('click', e => {
     localStorage.setItem('active_translation', key);
     translationLabel.textContent = TRANSLATIONS[key];
     document.title = `Scripture Search — ${TRANSLATIONS[key]} Bible`;
-    if (activeBook && activeChapter) loadChapter(activeChapter);
+    updateBibleChrome();
+    if (activeBook && activeChapter) selectChapter(activeChapter);
     else if (appMode === 'bible') showWelcome();
   });
 });
@@ -161,6 +189,99 @@ function getCurrentVerseData(vnum) {
     verse: vnum,
     text: verse.text
   };
+}
+
+function getTestamentLabel(testament = activeTestament) {
+  return testament === 'new' ? 'New Testament' : 'Old Testament';
+}
+
+function updateBibleChrome() {
+  translationLabel.textContent = TRANSLATIONS[activeTranslation] || activeTranslation.toUpperCase();
+  bookChipTitle.textContent = activeBook?.name || 'Choose Book';
+  if (activeBook && activeChapter) {
+    bookChipSub.textContent = `Chapter ${activeChapter} • ${getTestamentLabel(activeBook.testament)}`;
+  } else {
+    bookChipSub.textContent = getTestamentLabel(activeBook?.testament || activeTestament);
+  }
+}
+
+function syncTestamentTabs() {
+  otTab.classList.toggle('active', activeTestament === 'old');
+  ntTab.classList.toggle('active', activeTestament === 'new');
+}
+
+function updateNavState() {
+  const onBible = appMode === 'bible';
+  biblePane.classList.toggle('is-active', onBible);
+  stacksPane.classList.toggle('is-active', !onBible);
+  biblePane.setAttribute('aria-hidden', String(!onBible));
+  stacksPane.setAttribute('aria-hidden', String(onBible));
+  navBible.classList.toggle('active', onBible);
+  navStacks.classList.toggle('active', !onBible);
+  navBible.setAttribute('aria-current', onBible ? 'page' : 'false');
+  navStacks.setAttribute('aria-current', onBible ? 'false' : 'page');
+}
+
+function updateSearchEmptyState(message = 'Search within the selected translation or jump to a passage reference.') {
+  searchResults.innerHTML = `<div class="search-empty">${escHtml(message)}</div>`;
+}
+
+function focusVerseRow(verseNum) {
+  const row = verseArea.querySelector(`.verse-row[data-vnum="${verseNum}"]`);
+  if (!row) return;
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.classList.add('verse-focus');
+  setTimeout(() => row.classList.remove('verse-focus'), 1400);
+}
+
+function focusVerseRange(startVerse, endVerse = startVerse) {
+  focusVerseRow(startVerse);
+  for (let verseNum = startVerse; verseNum <= endVerse; verseNum += 1) {
+    const row = verseArea.querySelector(`.verse-row[data-vnum="${verseNum}"]`);
+    if (!row) continue;
+    row.classList.add('verse-focus');
+    setTimeout(() => row.classList.remove('verse-focus'), 1400);
+  }
+}
+
+function countStackPassages(stack) {
+  return (stack?.verses || []).reduce((sum, card) => {
+    const passages = card.passages ?? [{ ref: card.ref, text: card.text }];
+    return sum + passages.length;
+  }, 0);
+}
+
+function renderStacksSummary() {
+  const stacks = loadStacks();
+  const totalCards = stacks.reduce((sum, stack) => sum + stack.verses.length, 0);
+  const totalPassages = stacks.reduce((sum, stack) => sum + countStackPassages(stack), 0);
+  const activeStack = stacks.find(stack => stack.id === activeStackId);
+
+  if (!stacks.length) {
+    stacksSummary.innerHTML = `
+      <div class="stacks-summary-card empty">
+        <div class="stacks-summary-kicker">Study Library</div>
+        <h2>Build your first stack.</h2>
+        <p>Save verses from the reader, collect grouped passages, and keep notes together.</p>
+        <button class="summary-cta" type="button" id="summary-new-stack-btn">Create Stack</button>
+      </div>
+    `;
+    stacksSummary.querySelector('#summary-new-stack-btn')?.addEventListener('click', () => newStackBtn.click());
+    return;
+  }
+
+  stacksSummary.innerHTML = `
+    <div class="stacks-summary-card">
+      <div class="stacks-summary-copy">
+        <div class="stacks-summary-kicker">Study Library</div>
+        <h2>${stacks.length} stack${stacks.length !== 1 ? 's' : ''} ready</h2>
+        <p>${totalPassages} saved passage${totalPassages !== 1 ? 's' : ''} across ${totalCards} card${totalCards !== 1 ? 's' : ''}.</p>
+      </div>
+      <div class="stacks-summary-meta">
+        <span class="summary-meta-pill">${activeStack ? `Open: ${escHtml(activeStack.title)}` : 'Choose a stack'}</span>
+      </div>
+    </div>
+  `;
 }
 
 // ── Custom modal (replaces prompt/confirm) ────────────
@@ -241,7 +362,13 @@ async function init() {
 
   allBooks = data;
   await migrateOldPassages();
+  syncTestamentTabs();
+  updateBibleChrome();
   renderBookList();
+  renderStacksSummary();
+  renderStacksList();
+  updateNavState();
+  updateSearchEmptyState();
   showWelcome();
 }
 
@@ -287,10 +414,15 @@ function renderBookList() {
 
 // ── Select book ───────────────────────────────────────
 async function selectBook(book) {
+  appMode = 'bible';
+  updateNavState();
+  activeTestament = book.testament;
+  syncTestamentTabs();
   activeBook = book;
   activeChapter = null;
+  updateBibleChrome();
   renderBookList();
-  if (window.innerWidth <= 680) closeSidebar();
+  closeBookSheet();
 
   const { data } = await supabase
     .from('verses')
@@ -302,7 +434,7 @@ async function selectBook(book) {
 
   const totalChapters = data?.[0]?.chapter ?? 1;
   renderChapterBar(totalChapters);
-  selectChapter(1);
+  await selectChapter(1);
 }
 
 // ── Chapter bar ───────────────────────────────────────
@@ -319,10 +451,15 @@ function renderChapterBar(total) {
 
 // ── Select chapter ────────────────────────────────────
 async function selectChapter(num) {
+  if (!activeBook) return;
   activeChapter = num;
+  updateBibleChrome();
 
   chapterBar.querySelectorAll('.chapter-btn').forEach((btn, i) => {
     btn.classList.toggle('active', i + 1 === num);
+    if (i + 1 === num) {
+      btn.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    }
   });
 
   verseArea.innerHTML = `<div class="state-msg"><span class="spinner"></span> Loading…</div>`;
@@ -363,9 +500,18 @@ function renderVerses(verses) {
   if (selectedVerses.length) clearSelection();
   currentVerses = verses;
   const isNT = activeBook.testament === 'new';
+  const hasGreekChapter = Object.keys(greekByVerse).length > 0;
   let html = `
-    <div class="book-title">${escHtml(activeBook.name)}</div>
-    <div class="chapter-title">Chapter ${activeChapter}</div>
+    <section class="reader-hero">
+      <div class="reader-kicker">${getTestamentLabel(activeBook.testament)}</div>
+      <div class="book-title">${escHtml(activeBook.name)}</div>
+      <div class="reader-meta">
+        <span class="reader-meta-pill">Chapter ${activeChapter}</span>
+        <span class="reader-meta-pill">${TRANSLATIONS[activeTranslation]}</span>
+        ${hasGreekChapter ? '<span class="reader-meta-pill">Greek Study Ready</span>' : ''}
+      </div>
+    </section>
+    <section class="scripture-card">
   `;
   verses.forEach(v => {
     const greekWords = greekByVerse[v.verse] ?? [];
@@ -377,9 +523,10 @@ function renderVerses(verses) {
       </div>
     `;
   });
+  html += `</section>`;
   verseArea.innerHTML = html;
 
-  verseArea.scrollTop = 0;
+  bibleContent.scrollTop = 0;
 }
 
 // ── Compare translations ───────────────────────────────
@@ -556,8 +703,8 @@ function getActiveStackComparePassages() {
 }
 
 function syncStackCompareRows() {
-  verseArea.querySelectorAll('.stack-verse-card.action-active').forEach(card => card.classList.remove('action-active'));
-  verseArea.querySelectorAll('.stack-verse-row.stack-selected').forEach(row => row.classList.remove('stack-selected'));
+  stackDetail.querySelectorAll('.stack-verse-card.action-active').forEach(card => card.classList.remove('action-active'));
+  stackDetail.querySelectorAll('.stack-verse-row.stack-selected').forEach(row => row.classList.remove('stack-selected'));
 
   const active = getActiveStackCard();
   if (!active) return;
@@ -568,7 +715,7 @@ function syncStackCompareRows() {
     stackCompareSelectedRefs = stackCompareSelectedRefs.filter(ref => validRefs.has(ref));
   }
 
-  const card = verseArea.querySelector(`.stack-verse-card[data-idx="${active.idx}"]`);
+  const card = stackDetail.querySelector(`.stack-verse-card[data-idx="${active.idx}"]`);
   if (!card) return;
   card.classList.add('action-active');
 
@@ -673,20 +820,21 @@ function updateStackCompareBar() {
   });
 }
 
-// ── Verse click → Greek page ───────────────────────────
+// ── Stack compare selection ───────────────────────────
+stackDetail.addEventListener('click', e => {
+  const target = e.target instanceof Element ? e.target : null;
+  if (!target) return;
+  const row = target.closest('.stack-verse-row');
+  if (!row || appMode !== 'stacks' || !stackCompareMode) return;
+  const card = row.closest('.stack-verse-card');
+  if (!card || parseInt(card.dataset.idx) !== activeStackCompareIdx) return;
+  toggleStackComparePassage(card.dataset.idx, row.dataset.passageRef);
+});
+
+// ── Verse click → action mode ─────────────────────────
 verseArea.addEventListener('click', e => {
   const target = e.target instanceof Element ? e.target : null;
   if (!target) return;
-
-  if (appMode === 'stacks') {
-    const row = target.closest('.stack-verse-row');
-    if (!row || !stackCompareMode) return;
-    const card = row.closest('.stack-verse-card');
-    if (!card || parseInt(card.dataset.idx) !== activeStackCompareIdx) return;
-    toggleStackComparePassage(card.dataset.idx, row.dataset.passageRef);
-    return;
-  }
-
   const row = target.closest('.verse-row');
   if (!row || appMode !== 'bible') return;
   if (Date.now() < suppressVerseTapUntil) return;
@@ -859,122 +1007,113 @@ function parseReference(query) {
   };
 }
 
+async function openBibleLocation(book, chapter) {
+  appMode = 'bible';
+  updateNavState();
+  activeTestament = book.testament;
+  syncTestamentTabs();
+  activeBook = book;
+  activeChapter = null;
+  updateBibleChrome();
+  renderBookList();
+
+  const { data } = await supabase
+    .from('verses')
+    .select('chapter')
+    .eq('book_id', book.id)
+    .eq('translation', activeTranslation)
+    .order('chapter', { ascending: false })
+    .limit(1);
+
+  renderChapterBar(data?.[0]?.chapter ?? 1);
+  await selectChapter(chapter);
+}
+
 // ── Search ────────────────────────────────────────────
 async function doSearch() {
   const query = searchInput.value.trim();
-  if (!query) return;
+  if (!query) {
+    updateSearchEmptyState();
+    return;
+  }
   searchBtn.disabled = true;
-  searchBtn.textContent = '…';
+  searchBtn.textContent = '...';
   try {
+    searchResults.innerHTML = `<div class="search-empty"><span class="spinner"></span> Searching...</div>`;
 
-  // ── Reference search: "Psalm 1", "John 3:16-18", etc. ────────────────
-  const ref = parseReference(query);
-  if (ref) {
-    clearSelection();
-    activeBook = ref.book;
-    activeChapter = ref.chapter;
-    chapterBar.innerHTML = '';
-    renderBookList();
-    verseArea.innerHTML = `<div class="state-msg">Loading…</div>`;
-
-    const { data, error } = await supabase
-      .from('verses').select('verse, text')
-      .eq('book_id', ref.book.id).eq('chapter', ref.chapter).eq('translation', activeTranslation).order('verse');
-    if (error || !data?.length) {
-      verseArea.innerHTML = `<div class="state-msg">No verses found.</div>`;
+    const ref = parseReference(query);
+    if (ref) {
+      clearSelection();
+      closeSearchSheet();
+      await openBibleLocation(ref.book, ref.chapter);
+      if (ref.verseStart) {
+        focusVerseRange(ref.verseStart, ref.verseEnd ?? ref.verseStart);
+      }
       return;
     }
 
-    greekByVerse = {};
-    if (ref.book.testament === 'new') {
-      const { data: greek } = await supabase
-        .from('nt_word_tags')
-        .select('verse, position, word, transliteration, gloss, strongs')
-        .eq('book_id', ref.book.id).eq('chapter', ref.chapter)
-        .order('verse').order('position');
-      (greek ?? []).forEach(w => {
-        if (!greekByVerse[w.verse]) greekByVerse[w.verse] = [];
-        greekByVerse[w.verse].push(w);
-      });
+    const { data, error } = await supabase
+      .from('verses')
+      .select('verse, chapter, text, book_id, books(name)')
+      .eq('translation', activeTranslation)
+      .ilike('text', `%${query}%`)
+      .limit(100);
+
+    if (error) {
+      updateSearchEmptyState(`Search error: ${error.message}`);
+      return;
     }
 
-    renderVerses(data);
-
-    if (ref.verseStart) {
-      const end = ref.verseEnd ?? ref.verseStart;
-      currentVerses
-        .filter(v => v.verse >= ref.verseStart && v.verse <= end)
-        .forEach(v => {
-          const row = verseArea.querySelector(`.verse-row[data-vnum="${v.verse}"]`);
-          const btn = row?.querySelector('.add-btn');
-          toggleVerseSelection(
-            { ref: `${ref.book.name} ${ref.chapter}:${v.verse}`, book: ref.book.name, chapter: ref.chapter, verse: v.verse, text: v.text },
-            row, btn
-          );
-        });
+    if (!data?.length) {
+      updateSearchEmptyState(`No results for "${query}"`);
+      return;
     }
-    return;
-  }
 
-  verseArea.innerHTML = `<div class="state-msg"><span class="spinner"></span> Searching…</div>`;
-  chapterBar.innerHTML = '';
-  activeBook = null;
-  activeChapter = null;
-  renderBookList();
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escaped})`, 'gi');
 
-  const { data, error } = await supabase
-    .from('verses')
-    .select('verse, chapter, text, book_id, books(name)')
-    .eq('translation', activeTranslation)
-    .ilike('text', `%${query}%`)
-    .limit(100);
-
-  if (error) {
-    verseArea.innerHTML = `<div class="state-msg">Search error: ${escHtml(error.message)}</div>`;
-    return;
-  }
-
-  if (!data?.length) {
-    verseArea.innerHTML = `<div class="state-msg"><strong>No results</strong>Try different keywords</div>`;
-    return;
-  }
-
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`(${escaped})`, 'gi');
-
-  let html = `<div class="result-count">${data.length} result${data.length !== 1 ? 's' : ''} for "${escHtml(query)}"</div>`;
-  data.forEach((v, idx) => {
-    const ref = `${v.books.name} ${v.chapter}:${v.verse}`;
-    const highlighted = escHtml(v.text).replace(regex, '<mark>$1</mark>');
-    html += `
-      <div class="result-item">
-        <div class="result-item-header">
-          <div class="result-ref">${escHtml(ref)}</div>
-          <button class="add-btn" data-idx="${idx}" title="Add to a Study Stack">+</button>
+    let html = `<div class="result-count">${data.length} result${data.length !== 1 ? 's' : ''} for "${escHtml(query)}"</div>`;
+    data.forEach((v, idx) => {
+      const refLabel = `${v.books.name} ${v.chapter}:${v.verse}`;
+      const highlighted = escHtml(v.text).replace(regex, '<mark>$1</mark>');
+      html += `
+        <div class="result-item" data-idx="${idx}">
+          <div class="result-item-header">
+            <div class="result-ref">${escHtml(refLabel)}</div>
+            <button class="add-btn" data-idx="${idx}" title="Add to a Study Stack">+</button>
+          </div>
+          <div class="result-text">${highlighted}</div>
         </div>
-        <div class="result-text">${highlighted}</div>
-      </div>
-    `;
-  });
-
-  verseArea.innerHTML = html;
-
-  verseArea.querySelectorAll('.add-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const v = data[parseInt(btn.dataset.idx)];
-      toggleVerseSelection({
-        ref: `${v.books.name} ${v.chapter}:${v.verse}`,
-        book: v.books.name,
-        chapter: v.chapter,
-        verse: v.verse,
-        text: v.text
-      }, btn.closest('.result-item'), btn);
+      `;
     });
-  });
 
-  verseArea.scrollTop = 0;
+    searchResults.innerHTML = html;
 
+    searchResults.querySelectorAll('.result-item').forEach(item => {
+      item.addEventListener('click', async e => {
+        if (e.target.closest('.add-btn')) return;
+        const v = data[parseInt(item.dataset.idx)];
+        const book = allBooks.find(entry => entry.id === v.book_id);
+        if (!book) return;
+        closeSearchSheet();
+        await openBibleLocation(book, v.chapter);
+        focusVerseRow(v.verse);
+      });
+    });
+
+    searchResults.querySelectorAll('.add-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const v = data[parseInt(btn.dataset.idx)];
+        toggleVerseSelection({
+          ref: `${v.books.name} ${v.chapter}:${v.verse}`,
+          book: v.books.name,
+          chapter: v.chapter,
+          verse: v.verse,
+          text: v.text
+        }, btn.closest('.result-item'), btn);
+      });
+    });
   } finally {
     searchBtn.disabled = false;
     searchBtn.textContent = 'Search';
@@ -984,27 +1123,35 @@ async function doSearch() {
 // ── Welcome screen ────────────────────────────────────
 function showWelcome() {
   verseArea.innerHTML = `
-    <div class="state-msg">
-      <strong>Scripture Search</strong>
-      Select a book from the sidebar<br>or search for any keyword above
-    </div>
+    <section class="welcome-shell">
+      <div class="welcome-card">
+        <div class="welcome-kicker">Bible</div>
+        <strong>Read with room to breathe.</strong>
+        <p>Choose a book to begin reading or search within the ${escHtml(TRANSLATIONS[activeTranslation])} text.</p>
+        <div class="welcome-actions">
+          <button class="welcome-btn welcome-btn-primary" id="welcome-book-btn" type="button">Browse Books</button>
+          <button class="welcome-btn" id="welcome-search-btn" type="button">Search Scripture</button>
+        </div>
+      </div>
+    </section>
   `;
+  verseArea.querySelector('#welcome-book-btn')?.addEventListener('click', openBookSheet);
+  verseArea.querySelector('#welcome-search-btn')?.addEventListener('click', openSearchSheet);
+  bibleContent.scrollTop = 0;
 }
 
 // ── Testament tabs ────────────────────────────────────
 otTab.addEventListener('click', () => {
   activeTestament = 'old';
-  if (appMode === 'stacks') setMode('bible');
-  otTab.classList.add('active');
-  ntTab.classList.remove('active');
+  syncTestamentTabs();
+  updateBibleChrome();
   renderBookList();
 });
 
 ntTab.addEventListener('click', () => {
   activeTestament = 'new';
-  if (appMode === 'stacks') setMode('bible');
-  ntTab.classList.add('active');
-  otTab.classList.remove('active');
+  syncTestamentTabs();
+  updateBibleChrome();
   renderBookList();
 });
 
@@ -1036,8 +1183,8 @@ document.addEventListener('keydown', e => {
       if (prevBook) selectBook(prevBook);
     }
   }
-  if (e.key === 'ArrowDown') { e.preventDefault(); verseArea.scrollBy({ top: 120, behavior: 'smooth' }); }
-  if (e.key === 'ArrowUp')   { e.preventDefault(); verseArea.scrollBy({ top: -120, behavior: 'smooth' }); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); bibleContent.scrollBy({ top: 120, behavior: 'smooth' }); }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); bibleContent.scrollBy({ top: -120, behavior: 'smooth' }); }
 });
 
 
@@ -1057,57 +1204,56 @@ function saveStacks(stacks) {
 // ── Mode toggle ───────────────────────────────────────
 function setMode(mode) {
   appMode = mode;
+  closeBookSheet();
+  closeSearchSheet();
+  closeTranslationPicker();
+  updateNavState();
+
   if (mode === 'stacks') {
     clearSelection();
-    bookList.classList.add('hidden');
-    stackList.classList.remove('hidden');
-    stacksFooter.classList.remove('hidden');
-    tabStacks.classList.add('active');
-    otTab.classList.remove('active');
-    ntTab.classList.remove('active');
-    chapterBar.innerHTML = '';
+    renderStacksSummary();
     renderStacksList();
     const stacks = loadStacks();
     if (stacks.length > 0) {
       const target = stacks.find(s => s.id === activeStackId) ? activeStackId : stacks[0].id;
       openStack(target);
     } else {
+      activeStackId = null;
       showStacksWelcome();
     }
-  } else {
-    clearStackCompareMode();
-    bookList.classList.remove('hidden');
-    stackList.classList.add('hidden');
-    stacksFooter.classList.add('hidden');
-    tabStacks.classList.remove('active');
-    renderBookList();
-    if (activeBook && activeChapter) {
-      selectChapter(activeChapter);
-    } else {
-      showWelcome();
-    }
+    return;
+  }
+
+  clearStackCompareMode();
+  updateBibleChrome();
+  renderBookList();
+  if (!activeBook || !activeChapter) {
+    showWelcome();
   }
 }
 
-tabStacks.addEventListener('click', () => setMode('stacks'));
+navBible.addEventListener('click', () => setMode('bible'));
+navStacks.addEventListener('click', () => setMode('stacks'));
 
-// ── Render stacks list in sidebar ─────────────────────
+// ── Render stacks rail ────────────────────────────────
 function renderStacksList() {
   const stacks = loadStacks();
   stackList.innerHTML = '';
-  if (stacks.length === 0) {
-    stackList.innerHTML = '<div class="stack-empty-hint">No stacks yet.<br>Click <strong>+</strong> to create one.</div>';
-    return;
-  }
-  stacks.forEach(stack => {
-    const div = document.createElement('div');
-    div.className = 'stack-item' + (stack.id === activeStackId ? ' active' : '');
-    div.innerHTML = `
-      <span class="stack-item-name">${escHtml(stack.title)}</span>
-      <span class="stack-item-count">${stack.verses.length}</span>
-    `;
-    div.addEventListener('click', () => openStack(stack.id));
-    stackList.appendChild(div);
+  renderStacksSummary();
+  if (!stacks.length) return;
+
+  stackList.innerHTML = stacks.map(stack => `
+    <button class="stack-rail-card${stack.id === activeStackId ? ' active' : ''}" data-id="${escHtml(stack.id)}" type="button">
+      <span class="stack-rail-badge">${escHtml((stack.title || 'S').slice(0, 1).toUpperCase())}</span>
+      <span class="stack-rail-copy">
+        <span class="stack-rail-title">${escHtml(stack.title)}</span>
+        <span class="stack-rail-meta">${countStackPassages(stack)} saved passage${countStackPassages(stack) !== 1 ? 's' : ''}</span>
+      </span>
+    </button>
+  `).join('');
+
+  stackList.querySelectorAll('.stack-rail-card').forEach(btn => {
+    btn.addEventListener('click', () => openStack(btn.dataset.id));
   });
 }
 
@@ -1117,26 +1263,30 @@ function openStack(id) {
     clearStackCompareMode();
   }
   activeStackId = id;
+  renderStacksSummary();
   renderStacksList();
   renderStackView(id);
-  if (window.innerWidth <= 680) closeSidebar();
 }
 
 // ── Render stack in main area ─────────────────────────
 function renderStackView(id, { preserveScroll = false } = {}) {
   const stacks = loadStacks();
   const stack = stacks.find(s => s.id === id);
-  if (!stack) return;
-  const scrollTop = preserveScroll ? verseArea.scrollTop : 0;
+  if (!stack) {
+    stackDetail.innerHTML = '';
+    return;
+  }
+  const scrollTop = preserveScroll ? stacksContent.scrollTop : 0;
 
   let html = `
+    <div class="stack-panel">
     <div class="stack-view">
       <div class="stack-view-header">
         <input class="stack-title-input" id="stack-title-input"
           value="${escHtml(stack.title)}" maxlength="60" placeholder="Stack title…" />
         <button class="delete-stack-btn" id="delete-stack-btn">Delete Stack</button>
       </div>
-      <div class="stack-verse-count">${stack.verses.length} verse${stack.verses.length !== 1 ? 's' : ''}</div>
+      <div class="stack-verse-count">${countStackPassages(stack)} saved passage${countStackPassages(stack) !== 1 ? 's' : ''} across ${stack.verses.length} card${stack.verses.length !== 1 ? 's' : ''}</div>
       <div class="stack-add-bar">
         <input class="stack-add-input" id="stack-add-input" placeholder="Search to add a verse…" autocomplete="off" />
         <button class="stack-add-search-btn" id="stack-add-search-btn">Add</button>
@@ -1145,7 +1295,7 @@ function renderStackView(id, { preserveScroll = false } = {}) {
   `;
 
   if (stack.verses.length === 0) {
-    html += `<div class="state-msg" style="margin-top:60px">No verses yet.<br>Browse the Bible and click <strong style="color:var(--accent2)">+</strong> on any verse to add it here.</div>`;
+    html += `<div class="state-msg stack-empty-state"><strong>No saved cards yet.</strong>Long-press verses in the Bible reader to add them here, then expand each card with notes or comparison tools.</div>`;
   } else {
     stack.verses.forEach((v, idx) => {
       const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
@@ -1195,37 +1345,37 @@ function renderStackView(id, { preserveScroll = false } = {}) {
     });
   }
 
-  html += `</div>`;
-  verseArea.innerHTML = html;
+  html += `</div></div>`;
+  stackDetail.innerHTML = html;
   syncStackCompareRows();
   updateStackCompareBar();
   if (preserveScroll) {
-    const restoreScroll = () => { verseArea.scrollTop = scrollTop; };
+    const restoreScroll = () => { stacksContent.scrollTop = scrollTop; };
     requestAnimationFrame(() => {
       restoreScroll();
       requestAnimationFrame(restoreScroll);
     });
   } else {
-    verseArea.scrollTop = 0;
+    stackDetail.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  document.getElementById('stack-title-input').addEventListener('input', e => {
+  stackDetail.querySelector('#stack-title-input')?.addEventListener('input', e => {
     updateStackTitle(id, e.target.value);
   });
 
-  document.getElementById('delete-stack-btn').addEventListener('click', async () => {
+  stackDetail.querySelector('#delete-stack-btn')?.addEventListener('click', async () => {
     const ok = await showConfirm(`Delete "${stack.title}"?`);
     if (ok) deleteStack(id);
   });
 
-  verseArea.querySelectorAll('.remove-verse-btn').forEach(btn => {
+  stackDetail.querySelectorAll('.remove-verse-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const ok = await showConfirm('Remove this verse?', 'Remove');
       if (ok) removeVerseFromStack(id, parseInt(btn.dataset.idx));
     });
   });
 
-  verseArea.querySelectorAll('.add-passage-btn').forEach(btn => {
+  stackDetail.querySelectorAll('.add-passage-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const area = btn.closest('.stack-verse-card').querySelector('.add-passage-area');
       area.classList.toggle('hidden');
@@ -1233,13 +1383,13 @@ function renderStackView(id, { preserveScroll = false } = {}) {
     });
   });
 
-  verseArea.querySelectorAll('.remove-passage-btn').forEach(btn => {
+  stackDetail.querySelectorAll('.remove-passage-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       removePassageFromCard(id, parseInt(btn.dataset.cardidx), parseInt(btn.dataset.pi));
     });
   });
 
-  verseArea.querySelectorAll('.add-passage-input').forEach(input => {
+  stackDetail.querySelectorAll('.add-passage-input').forEach(input => {
     const cardIdx = parseInt(input.dataset.cardidx);
     const resultsEl = input.nextElementSibling;
 
@@ -1291,7 +1441,7 @@ function renderStackView(id, { preserveScroll = false } = {}) {
     input.addEventListener('keydown', e => { if (e.key === 'Enter') searchAndShow(); });
   });
 
-  verseArea.querySelectorAll('.compare-card-btn').forEach(btn => {
+  stackDetail.querySelectorAll('.compare-card-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
       const idx = parseInt(btn.dataset.idx);
@@ -1303,7 +1453,7 @@ function renderStackView(id, { preserveScroll = false } = {}) {
     });
   });
 
-  verseArea.querySelectorAll('.note-toggle').forEach(btn => {
+  stackDetail.querySelectorAll('.note-toggle').forEach(btn => {
     btn.addEventListener('click', () => {
       const ta = btn.closest('.stack-verse-card').querySelector('.stack-note');
       const opening = ta.classList.contains('hidden');
@@ -1312,13 +1462,13 @@ function renderStackView(id, { preserveScroll = false } = {}) {
     });
   });
 
-  verseArea.querySelectorAll('.stack-note').forEach(ta => {
+  stackDetail.querySelectorAll('.stack-note').forEach(ta => {
     ta.addEventListener('input', () => {
       updateVerseNote(id, parseInt(ta.dataset.idx), ta.value);
     });
   });
 
-  verseArea.querySelectorAll('.card-translation-btn').forEach(btn => {
+  stackDetail.querySelectorAll('.card-translation-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
       const idx = parseInt(btn.dataset.idx);
@@ -1417,11 +1567,19 @@ function renderStackView(id, { preserveScroll = false } = {}) {
 
 // ── Welcome when no stacks ────────────────────────────
 function showStacksWelcome() {
-  verseArea.innerHTML = `
-    <div class="state-msg">
-      <strong>Study Stacks</strong>
-      Click <strong>+</strong> in the sidebar to create your first stack.<br>
-      Then browse the Bible and click <strong style="color:var(--accent2)">+</strong> on any verse.
+  renderStacksSummary();
+  stackList.innerHTML = '';
+  stackDetail.innerHTML = `
+    <div class="empty-stacks">
+      <div class="empty-stacks-icon">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 4 4.5 8 12 12 19.5 8 12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M4.5 12 12 16l7.5-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4.5 16 12 20l7.5-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h2>No stacks yet</h2>
+      <p>Create a stack to collect verses, keep passage groups together, and attach notes for study.</p>
     </div>
   `;
 }
@@ -1442,7 +1600,12 @@ newStackBtn.addEventListener('click', async () => {
 function updateStackTitle(id, title) {
   const stacks = loadStacks();
   const stack = stacks.find(s => s.id === id);
-  if (stack) { stack.title = title; saveStacks(stacks); renderStacksList(); }
+  if (stack) {
+    stack.title = title;
+    saveStacks(stacks);
+    renderStacksSummary();
+    renderStacksList();
+  }
 }
 
 function deleteStack(id) {
@@ -1450,6 +1613,7 @@ function deleteStack(id) {
   saveStacks(stacks);
   activeStackId = null;
   clearStackCompareMode();
+  renderStacksSummary();
   if (stacks.length > 0) {
     openStack(stacks[0].id);
   } else {
@@ -1465,6 +1629,7 @@ function removeVerseFromStack(stackId, idx) {
   stack.verses.splice(idx, 1);
   saveStacks(stacks);
   clearStackCompareMode();
+  renderStacksSummary();
   renderStackView(stackId);
   renderStacksList();
 }
@@ -1489,6 +1654,7 @@ function addPassageToCard(stackId, cardIdx, passageData) {
   }
   card.passages.push(passageData);
   saveStacks(stacks);
+  renderStacksSummary();
   renderStackView(stackId);
 }
 
@@ -1500,6 +1666,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
   if (!card.passages) card.passages = [{ ref: card.ref, text: card.text }];
   card.passages.splice(passageIdx, 1);
   saveStacks(stacks);
+  renderStacksSummary();
   renderStackView(stackId);
 }
 
@@ -1508,7 +1675,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
   let dragCard = null, longPressTimer = null, startY = 0, offsetY = 0;
   let placeholder = null, scrollInterval = null, isDragging = false;
 
-  verseArea.addEventListener('touchstart', e => {
+  stackDetail.addEventListener('touchstart', e => {
     if (isDragging) return;
     const card = e.target.closest('.stack-verse-card');
     if (!card || e.target.closest('input, button, textarea, a')) return;
@@ -1534,7 +1701,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
       card.style.left = rect.left + 'px';
       card.style.width = rect.width + 'px';
 
-      verseArea.querySelectorAll('.stack-verse-card:not(.dragging)').forEach(c => {
+      stackDetail.querySelectorAll('.stack-verse-card:not(.dragging)').forEach(c => {
         c.style.transition = 'transform 0.25s ease, opacity 0.2s';
         c.style.opacity = '0.6';
       });
@@ -1543,7 +1710,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     }, 400);
   }, { passive: true });
 
-  verseArea.addEventListener('touchmove', e => {
+  stackDetail.addEventListener('touchmove', e => {
     if (!isDragging) {
       if (longPressTimer && Math.abs(e.touches[0].clientY - startY) > 8) {
         clearTimeout(longPressTimer);
@@ -1556,15 +1723,15 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     dragCard.style.top = (y - offsetY) + 'px';
 
     clearInterval(scrollInterval);
-    const areaRect = verseArea.getBoundingClientRect();
+    const areaRect = stacksContent.getBoundingClientRect();
     const edgeZone = 60;
     if (y < areaRect.top + edgeZone) {
-      scrollInterval = setInterval(() => verseArea.scrollTop -= 8, 16);
+      scrollInterval = setInterval(() => { stacksContent.scrollTop -= 8; }, 16);
     } else if (y > areaRect.bottom - edgeZone) {
-      scrollInterval = setInterval(() => verseArea.scrollTop += 8, 16);
+      scrollInterval = setInterval(() => { stacksContent.scrollTop += 8; }, 16);
     }
 
-    const siblings = [...verseArea.querySelectorAll('.stack-verse-card:not(.dragging)')];
+    const siblings = [...stackDetail.querySelectorAll('.stack-verse-card:not(.dragging)')];
     let inserted = false;
     for (const sib of siblings) {
       const r = sib.getBoundingClientRect();
@@ -1593,7 +1760,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     placeholder?.remove();
     dragCard.classList.remove('dragging');
     dragCard.removeAttribute('style');
-    verseArea.querySelectorAll('.stack-verse-card').forEach(c => {
+    stackDetail.querySelectorAll('.stack-verse-card').forEach(c => {
       c.style.opacity = ''; c.style.transition = ''; c.style.transform = '';
     });
     dragCard = null;
@@ -1611,7 +1778,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     dragCard.style.transition = 'top 0.2s ease, box-shadow 0.2s ease';
     dragCard.style.top = phRect.top + 'px';
 
-    verseArea.querySelectorAll('.stack-verse-card:not(.dragging)').forEach(c => {
+    stackDetail.querySelectorAll('.stack-verse-card:not(.dragging)').forEach(c => {
       c.style.opacity = ''; c.style.transition = ''; c.style.transform = '';
     });
 
@@ -1629,7 +1796,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
       finishCard.classList.remove('dragging');
       finishCard.removeAttribute('style');
 
-      const newOrder = [...verseArea.querySelectorAll('.stack-verse-card')].map(c => parseInt(c.dataset.idx));
+      const newOrder = [...stackDetail.querySelectorAll('.stack-verse-card')].map(c => parseInt(c.dataset.idx));
       const stacks = loadStacks();
       const st = stacks.find(s => s.id === finishStackId);
       if (st) {
@@ -1640,13 +1807,14 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
           st.verses = newOrder.map(i => st.verses[i]);
           saveStacks(stacks);
         }
+        renderStacksSummary();
         renderStackView(finishStackId, { preserveScroll: true });
       }
     }, 200);
   }
 
-  verseArea.addEventListener('touchend', endDrag);
-  verseArea.addEventListener('touchcancel', cancelDrag);
+  stackDetail.addEventListener('touchend', endDrag);
+  stackDetail.addEventListener('touchcancel', cancelDrag);
 }
 
 function addVerseToStack(stackId, verseData) {
@@ -1660,11 +1828,13 @@ function addVerseToStack(stackId, verseData) {
   const passages = verseData.passages || [{ ref: verseData.ref, text: verseData.text }];
   stack.verses.push({ passages, note: '', addedAt: Date.now() });
   saveStacks(stacks);
+  renderStacksSummary();
   showToast(`Added to "${stack.title}"`);
   if (appMode === 'stacks' && activeStackId === stackId) {
     renderStackView(stackId);
     renderStacksList();
   } else {
+    renderStacksSummary();
     renderStacksList();
   }
 }
