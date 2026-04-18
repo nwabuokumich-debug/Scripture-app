@@ -200,9 +200,6 @@ searchOpenBtn.addEventListener('click', openSearchSheet);
   let startY = 0;
   let dragY = 0;
   let dragging = false;
-  let lastTouchY = 0;
-  let lastTouchTime = 0;
-  let velocityY = 0;
   let snapTimer = null;
 
   bookSheetDragZone.addEventListener('touchstart', e => {
@@ -215,9 +212,6 @@ searchOpenBtn.addEventListener('click', openSearchSheet);
     dragging = true;
     startY = e.touches[0].clientY;
     dragY = 0;
-    lastTouchY = startY;
-    lastTouchTime = performance.now();
-    velocityY = 0;
     bookSheet.style.transition = 'none';
     bookSheetBackdrop.style.transition = 'none';
     bookSheet.classList.add('dragging');
@@ -230,12 +224,6 @@ searchOpenBtn.addEventListener('click', openSearchSheet);
     const travel = getBookSheetTravel();
     const overshoot = Math.max(0, rawY - travel);
     const nextY = overshoot > 0 ? travel + overshoot * 0.18 : rawY;
-    const now = performance.now();
-    const dt = Math.max(1, now - lastTouchTime);
-
-    velocityY = (touchY - lastTouchY) / dt;
-    lastTouchY = touchY;
-    lastTouchTime = now;
     dragY = nextY;
     setBookSheetOffset(nextY);
   }, { passive: true });
@@ -244,8 +232,8 @@ searchOpenBtn.addEventListener('click', openSearchSheet);
     if (!dragging) return;
     dragging = false;
     const travel = getBookSheetTravel();
-    const projectedY = dragY + Math.max(0, velocityY) * 180;
-    const shouldSnapClosed = shouldClose && projectedY >= travel / 2;
+    const openProgress = 1 - Math.min(dragY / travel, 1);
+    const shouldSnapClosed = shouldClose && openProgress <= 0.5;
 
     if (snapTimer) clearTimeout(snapTimer);
 
