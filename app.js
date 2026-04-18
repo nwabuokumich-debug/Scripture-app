@@ -52,10 +52,12 @@ let suppressVerseTapUntil = 0;
 let stackCompareMode = false;
 let activeStackCompareIdx = null;
 let stackCompareSelectedRefs = [];
+let bookOrderMode   = localStorage.getItem('book_order_mode') || 'traditional';
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 'UKJV', mkjv: 'MKJV', litv: 'LITV', cpdv: 'CPDV', darby: 'Darby', webster: 'Webster', dra: 'DRA', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
 // Migrate away from removed translations
 if (!TRANSLATIONS[activeTranslation]) { activeTranslation = 'kjv'; localStorage.setItem('active_translation', 'kjv'); }
+if (!['traditional', 'alphabetical'].includes(bookOrderMode)) bookOrderMode = 'traditional';
 const cardTranslations = new Map(); // idx → translation override for stack cards
 
 function triggerHaptic(pattern = 16) {
@@ -95,6 +97,7 @@ function closeSheet(backdrop) {
 }
 
 function openBookSheet() {
+  syncBookOrderTabs();
   renderBookList();
   openSheet(bookSheetBackdrop);
 }
@@ -205,9 +208,25 @@ function updateBibleChrome() {
   }
 }
 
-function syncTestamentTabs() {
-  otTab.classList.toggle('active', activeTestament === 'old');
-  ntTab.classList.toggle('active', activeTestament === 'new');
+function syncBookOrderTabs() {
+  otTab.classList.toggle('active', bookOrderMode === 'traditional');
+  ntTab.classList.toggle('active', bookOrderMode === 'alphabetical');
+}
+
+function setBookOrderMode(mode) {
+  if (bookOrderMode === mode) return;
+  bookOrderMode = mode;
+  localStorage.setItem('book_order_mode', mode);
+  syncBookOrderTabs();
+  renderBookList();
+}
+
+function getOrderedBooks() {
+  const books = [...allBooks];
+  if (bookOrderMode === 'alphabetical') {
+    return books.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return books;
 }
 
 function updateNavState() {
@@ -362,7 +381,7 @@ async function init() {
 
   allBooks = data;
   await migrateOldPassages();
-  syncTestamentTabs();
+  syncBookOrderTabs();
   updateBibleChrome();
   renderBookList();
   renderStacksSummary();
@@ -402,14 +421,36 @@ async function migrateOldPassages() {
 // ── Book list ─────────────────────────────────────────
 function renderBookList() {
   bookList.innerHTML = '';
-  const filtered = allBooks.filter(b => b.testament === activeTestament);
-  filtered.forEach(book => {
-    const div = document.createElement('div');
-    div.className = 'book-item' + (activeBook?.id === book.id ? ' active' : '');
-    div.textContent = book.name;
-    div.addEventListener('click', () => selectBook(book));
-    bookList.appendChild(div);
+  const ordered = getOrderedBooks();
+  if (!ordered.length) {
+    bookList.innerHTML = `<div class="book-empty">No books available.</div>`;
+    return;
+  }
+
+  ordered.forEach(book => {
+    const button = document.createElement('button');
+    button.className = 'book-item' + (activeBook?.id === book.id ? ' active' : '');
+    button.type = 'button';
+    button.innerHTML = `
+      <span class="book-item-label">${escHtml(book.name)}</span>
+      <span class="book-item-icons" aria-hidden="true">
+        <svg class="book-item-audio" viewBox="0 0 24 24" fill="none">
+          <path d="M5.5 15V9h3.2l4.8-4v14l-4.8-4H5.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M15 9.5a3 3 0 0 1 0 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <svg class="book-item-chevron" viewBox="0 0 20 20" fill="none">
+          <path d="m7 5 5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+    `;
+    button.addEventListener('click', () => selectBook(book));
+    bookList.appendChild(button);
   });
+
+  const activeRow = bookList.querySelector('.book-item.active');
+  if (activeRow) {
+    requestAnimationFrame(() => activeRow.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+  }
 }
 
 // ── Select book ───────────────────────────────────────
@@ -417,7 +458,6 @@ async function selectBook(book) {
   appMode = 'bible';
   updateNavState();
   activeTestament = book.testament;
-  syncTestamentTabs();
   activeBook = book;
   activeChapter = null;
   updateBibleChrome();
@@ -1011,7 +1051,6 @@ async function openBibleLocation(book, chapter) {
   appMode = 'bible';
   updateNavState();
   activeTestament = book.testament;
-  syncTestamentTabs();
   activeBook = book;
   activeChapter = null;
   updateBibleChrome();
@@ -1140,20 +1179,9 @@ function showWelcome() {
   bibleContent.scrollTop = 0;
 }
 
-// ── Testament tabs ────────────────────────────────────
-otTab.addEventListener('click', () => {
-  activeTestament = 'old';
-  syncTestamentTabs();
-  updateBibleChrome();
-  renderBookList();
-});
-
-ntTab.addEventListener('click', () => {
-  activeTestament = 'new';
-  syncTestamentTabs();
-  updateBibleChrome();
-  renderBookList();
-});
+// ── Book order tabs ───────────────────────────────────
+otTab.addEventListener('click', () => setBookOrderMode('traditional'));
+ntTab.addEventListener('click', () => setBookOrderMode('alphabetical'));
 
 // ── Search events ─────────────────────────────────────
 searchBtn.addEventListener('click', doSearch);
