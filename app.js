@@ -31,6 +31,7 @@ const bookChipTitle      = document.getElementById('book-chip-title');
 const bookChipSub        = document.getElementById('book-chip-sub');
 const bookSheetBackdrop  = document.getElementById('book-sheet-backdrop');
 const bookSheetClose     = document.getElementById('book-sheet-close');
+const bookSheetDone      = document.getElementById('book-sheet-done');
 const searchSheetBackdrop = document.getElementById('search-sheet-backdrop');
 
 // ── State ─────────────────────────────────────────────
@@ -116,12 +117,22 @@ function closeSearchSheet() {
 }
 
 bookSheetClose.addEventListener('click', closeBookSheet);
+bookSheetDone.addEventListener('click', closeBookSheet);
 bookSheetBackdrop.addEventListener('click', e => {
   if (e.target === bookSheetBackdrop) closeBookSheet();
 });
+bookSheetBackdrop.addEventListener('touchend', e => {
+  if (e.target === bookSheetBackdrop) closeBookSheet();
+}, { passive: true });
 searchCloseBtn.addEventListener('click', closeSearchSheet);
 searchSheetBackdrop.addEventListener('click', e => {
   if (e.target === searchSheetBackdrop) closeSearchSheet();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    closeBookSheet();
+    closeSearchSheet();
+  }
 });
 bookPickerBtn.addEventListener('click', openBookSheet);
 searchOpenBtn.addEventListener('click', openSearchSheet);
@@ -433,18 +444,7 @@ function renderBookList() {
     const button = document.createElement('button');
     button.className = 'book-item' + (activeBook?.id === book.id ? ' active' : '');
     button.type = 'button';
-    button.innerHTML = `
-      <span class="book-item-label">${escHtml(book.name)}</span>
-      <span class="book-item-icons" aria-hidden="true">
-        <svg class="book-item-audio" viewBox="0 0 24 24" fill="none">
-          <path d="M5.5 15V9h3.2l4.8-4v14l-4.8-4H5.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-          <path d="M15 9.5a3 3 0 0 1 0 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-        </svg>
-        <svg class="book-item-chevron" viewBox="0 0 20 20" fill="none">
-          <path d="m7 5 5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </span>
-    `;
+    button.innerHTML = `<span class="book-item-label">${escHtml(book.name)}</span>`;
     button.addEventListener('click', () => selectBook(book));
     bookList.appendChild(button);
   });

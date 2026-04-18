@@ -422,7 +422,7 @@ body::before {
   text-align: left;
 }
 .sheet-text-btn:active { color: var(--text); }
-.book-sheet-spacer { min-height: 1px; }
+.sheet-text-btn-right { text-align: right; }
 .book-sheet-footer {
   padding: 12px 14px max(14px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
@@ -470,7 +470,7 @@ body::before {
   font-weight: 500;
   cursor: pointer;
   text-align: left;
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  display: block;
   transition: background 0.12s;
 }
 .book-item:active { background: var(--surface); }
@@ -486,13 +486,6 @@ body::before {
   text-overflow: ellipsis;
   line-height: 1.2;
 }
-.book-item-icons {
-  display: flex; align-items: center; gap: 10px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.book-item-audio { width: 18px; height: 18px; opacity: 0.68; }
-.book-item-chevron { width: 18px; height: 18px; color: var(--border2); }
 .book-empty {
   padding: 28px 18px;
   text-align: center;
@@ -1713,6 +1706,5 @@ body.theme-dark .primary-pill-btn {
   .book-sheet-header { grid-template-columns: 58px minmax(0, 1fr) 58px; padding-inline: 8px; }
   .sheet-text-btn { font-size: 0.88rem; }
   .book-item { padding: 13px 14px; }
-  .book-item-icons { gap: 8px; }
   .search-pill { padding-right: 10px; }
 }
