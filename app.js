@@ -279,7 +279,7 @@ function renderStacksSummary() {
   if (!stacks.length) {
     stacksSummary.innerHTML = `
       <div class="stacks-summary-card empty">
-        <div class="stacks-summary-kicker">Study Library</div>
+        <div class="stacks-summary-kicker">Collections</div>
         <h2>Build your first stack.</h2>
         <p>Save verses from the reader, collect grouped passages, and keep notes together.</p>
         <button class="summary-cta" type="button" id="summary-new-stack-btn">Create Stack</button>
@@ -290,14 +290,16 @@ function renderStacksSummary() {
   }
 
   stacksSummary.innerHTML = `
-    <div class="stacks-summary-card">
+    <div class="stacks-summary-card compact">
       <div class="stacks-summary-copy">
-        <div class="stacks-summary-kicker">Study Library</div>
-        <h2>${stacks.length} stack${stacks.length !== 1 ? 's' : ''} ready</h2>
-        <p>${totalPassages} saved passage${totalPassages !== 1 ? 's' : ''} across ${totalCards} card${totalCards !== 1 ? 's' : ''}.</p>
+        <div class="stacks-summary-kicker">Collections</div>
+        <h2>${totalPassages} saved passage${totalPassages !== 1 ? 's' : ''}</h2>
+        <p>${totalCards} card${totalCards !== 1 ? 's' : ''} across ${stacks.length} stack${stacks.length !== 1 ? 's' : ''}${activeStack ? ` · Open: ${escHtml(activeStack.title)}` : ''}.</p>
       </div>
       <div class="stacks-summary-meta">
-        <span class="summary-meta-pill">${activeStack ? `Open: ${escHtml(activeStack.title)}` : 'Choose a stack'}</span>
+        <span class="summary-meta-pill">${stacks.length} stack${stacks.length !== 1 ? 's' : ''}</span>
+        <span class="summary-meta-pill">${totalCards} card${totalCards !== 1 ? 's' : ''}</span>
+        ${activeStack ? `<span class="summary-meta-pill is-active">Open now</span>` : ''}
       </div>
     </div>
   `;
