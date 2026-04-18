@@ -1293,11 +1293,11 @@ function openStack(id) {
   activeStackId = id;
   renderStacksSummary();
   renderStacksList();
-  renderStackView(id);
+  renderStackView(id, { resetScroll: true });
 }
 
 // ── Render stack in main area ─────────────────────────
-function renderStackView(id, { preserveScroll = false } = {}) {
+function renderStackView(id, { preserveScroll = false, resetScroll = false } = {}) {
   const stacks = loadStacks();
   const stack = stacks.find(s => s.id === id);
   if (!stack) {
@@ -1383,8 +1383,10 @@ function renderStackView(id, { preserveScroll = false } = {}) {
       restoreScroll();
       requestAnimationFrame(restoreScroll);
     });
-  } else {
-    stackDetail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else if (resetScroll) {
+    requestAnimationFrame(() => {
+      stacksContent.scrollTop = Math.max(0, stackDetail.offsetTop - 12);
+    });
   }
 
   stackDetail.querySelector('#stack-title-input')?.addEventListener('input', e => {
@@ -1658,7 +1660,7 @@ function removeVerseFromStack(stackId, idx) {
   saveStacks(stacks);
   clearStackCompareMode();
   renderStacksSummary();
-  renderStackView(stackId);
+  renderStackView(stackId, { preserveScroll: true });
   renderStacksList();
 }
 
@@ -1683,7 +1685,7 @@ function addPassageToCard(stackId, cardIdx, passageData) {
   card.passages.push(passageData);
   saveStacks(stacks);
   renderStacksSummary();
-  renderStackView(stackId);
+  renderStackView(stackId, { preserveScroll: true });
 }
 
 function removePassageFromCard(stackId, cardIdx, passageIdx) {
@@ -1695,7 +1697,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
   card.passages.splice(passageIdx, 1);
   saveStacks(stacks);
   renderStacksSummary();
-  renderStackView(stackId);
+  renderStackView(stackId, { preserveScroll: true });
 }
 
 // ── Drag-to-reorder (single global listener set) ─────
@@ -1859,7 +1861,7 @@ function addVerseToStack(stackId, verseData) {
   renderStacksSummary();
   showToast(`Added to "${stack.title}"`);
   if (appMode === 'stacks' && activeStackId === stackId) {
-    renderStackView(stackId);
+    renderStackView(stackId, { preserveScroll: true });
     renderStacksList();
   } else {
     renderStacksSummary();
