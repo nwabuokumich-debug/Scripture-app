@@ -2259,6 +2259,11 @@ const settingsPanel = document.getElementById('settings-panel');
 const settingsClose = document.getElementById('settings-close');
 const spFontList    = document.getElementById('sp-font-list');
 
+// Render the settings panel at the document root so it sits above its backdrop.
+if (settingsPanel.parentElement !== document.body) {
+  document.body.appendChild(settingsPanel);
+}
+
 function closeSettings() {
   settingsPanel.classList.add('hidden');
   settingsBtn.classList.remove('active');
