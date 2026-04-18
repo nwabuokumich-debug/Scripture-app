@@ -32,7 +32,6 @@ const bookChipSub        = document.getElementById('book-chip-sub');
 const bookSheetBackdrop  = document.getElementById('book-sheet-backdrop');
 const bookSheet          = document.getElementById('book-sheet');
 const bookSheetClose     = document.getElementById('book-sheet-close');
-const bookSheetDone      = document.getElementById('book-sheet-done');
 const bookSheetDragZone  = document.getElementById('book-sheet-drag-zone');
 const searchSheetBackdrop = document.getElementById('search-sheet-backdrop');
 
@@ -125,7 +124,6 @@ function closeSearchSheet() {
 }
 
 bookSheetClose.addEventListener('click', closeBookSheet);
-bookSheetDone.addEventListener('click', closeBookSheet);
 bookSheetBackdrop.addEventListener('click', e => {
   if (e.target === bookSheetBackdrop) closeBookSheet();
 });
