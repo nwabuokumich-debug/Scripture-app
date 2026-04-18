@@ -1,4 +1,4 @@
-const CACHE = 'scripture-v68';
+const CACHE = 'scripture-v69';
 
 self.addEventListener('install', e => {
   self.skipWaiting();

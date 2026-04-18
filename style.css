@@ -88,10 +88,10 @@ body::before {
   opacity: 1;
   transform: translateY(0);
   transition:
-    max-height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
-    padding 0.3s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 0.22s ease,
-    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    max-height 0.44s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.44s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.3s ease,
+    transform 0.44s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .top-bar-main {
@@ -235,10 +235,10 @@ body::before {
   opacity: 1;
   transform: translateY(0);
   transition:
-    max-height 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 0.2s ease,
-    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    max-height 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.28s ease,
+    transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .chapter-bar::-webkit-scrollbar { display: none; }
 .chapter-bar:empty { padding: 0; }
@@ -372,9 +372,9 @@ body::before {
   transform: translateY(0);
   opacity: 1;
   transition:
-    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 0.22s ease,
-    background 0.2s ease;
+    transform 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.3s ease,
+    background 0.24s ease;
 }
 .bottom-nav.chrome-collapsed {
   transform: translateY(calc(100% + env(safe-area-inset-bottom)));

@@ -2461,8 +2461,8 @@ document.querySelectorAll('.sp-spacing-btn').forEach(btn => {
 
 // ── Apply on boot ─────────────────────────────────────
 applySettings(loadSettings());
-bindPaneChromeScroll(bibleContent, biblePane, { minScrollTop: 84, hideDistance: 42, showDistance: 16 });
-bindPaneChromeScroll(stacksContent, stacksPane, { minScrollTop: 64, hideDistance: 36, showDistance: 16 });
+bindPaneChromeScroll(bibleContent, biblePane, { minScrollTop: 108, hideDistance: 68, showDistance: 24 });
+bindPaneChromeScroll(stacksContent, stacksPane, { minScrollTop: 84, hideDistance: 56, showDistance: 24 });
 resetChromeScroll(bibleContent, biblePane);
 resetChromeScroll(stacksContent, stacksPane);
 syncBottomNavChrome();

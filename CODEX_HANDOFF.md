@@ -16,6 +16,7 @@
 - Smoothed and then slowed the books sheet open/close/snap animation so the motion feels less abrupt on mobile.
 - Fixed the reader settings panel becoming untappable on mobile by rendering it above its backdrop at the document root.
 - Added scroll-direction-based chrome hiding for both Bible reading and Stacks: downward reading scroll collapses the top controls and bottom nav, upward scroll reveals them again.
+- Softened the hide-on-read behavior so the chrome waits for a longer scroll and eases out more gradually instead of disappearing too quickly.
 - Bumped the app asset cache versions in `index.html` and `sw.js` to force updated JS/CSS to load after changes.
 - Created this handoff document to capture the current app state, setup notes, and known issues for Claude.
 
@@ -58,7 +59,7 @@ The anon key is fine to be public (it's a "publishable" key). The service key by
 - Git remote points to `https://github.com/nwabuokumich-debug/Scripture-app.git` and the current branch is `main`
 - `manifest.json` is configured for the path `/Scripture-app/` via `start_url` and `scope`
 - If the deployed path differs, update `manifest.json`
-- The service worker cache name is `scripture-v68` in `sw.js` — bump when deploying, and keep the `style.css?v=71` / `app.js?v=70` query strings in `index.html` aligned with the current build
+- The service worker cache name is `scripture-v69` in `sw.js` — bump when deploying, and keep the `style.css?v=72` / `app.js?v=71` query strings in `index.html` aligned with the current build
 
 ---
 
@@ -172,7 +173,7 @@ Note: `import-translations.js` and `import-web-dra.js` overlap on WEB/DRA — th
 - No server-side storage — stacks are device-local only
 
 ### Service Worker
-- Cache name must be bumped manually in `sw.js` to force cache invalidation (`scripture-v68` at the moment)
+- Cache name must be bumped manually in `sw.js` to force cache invalidation (`scripture-v69` at the moment)
 - Network-first strategy: always tries fresh, falls back to cache
 
 ---
@@ -191,10 +192,10 @@ HNV, ERV, and WNT are not in the current `TRANSLATIONS` list in `app.js`, and `a
 However, `import-translations.js` still contains import logic for HNV, ERV, and WNT, so the repo does **not** prove why those translations were removed from the UI or whether their upstream source data was unusable.
 
 ### 4. Cache version must be bumped manually
-`sw.js` line 1: `const CACHE = 'scripture-v68'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
+`sw.js` line 1: `const CACHE = 'scripture-v69'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
 
 ### 5. Browser cache-busting query strings
-`index.html` loads `app.js?v=70` and `style.css?v=71` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
+`index.html` loads `app.js?v=71` and `style.css?v=72` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
 
 ### 6. PWA path is hardcoded
 `manifest.json` has `"start_url": "/Scripture-app/"` and `"scope": "/Scripture-app/"`. If the app ever moves to a different URL path, both values must be updated or the PWA install will break.
