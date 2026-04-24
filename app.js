@@ -2921,6 +2921,7 @@ const READER_SIZE_MAX = 1.9;
 const READER_SIZE_STEP = 0.06;
 
 const settingsBtn     = document.getElementById('settings-btn');
+const settingsSheetBackdrop = document.getElementById('settings-sheet-backdrop');
 const settingsPanel   = document.getElementById('settings-panel');
 const spFontList      = document.getElementById('sp-font-list');
 const spFontSummary   = document.getElementById('sp-font-summary');
@@ -2928,29 +2929,12 @@ const spFontCurrent   = document.getElementById('sp-font-current');
 const spFontToggle    = document.getElementById('sp-font-toggle');
 const spSizeDownBtn   = document.getElementById('sp-size-down');
 const spSizeUpBtn     = document.getElementById('sp-size-up');
-let settingsBackdropRemoveTimer = null;
-
-// Render the settings panel at the document root so it sits above its backdrop.
-if (settingsPanel.parentElement !== document.body) {
-  document.body.appendChild(settingsPanel);
-}
-settingsPanel.classList.remove('hidden');
-settingsPanel.setAttribute('aria-hidden', 'true');
 
 function closeSettings() {
-  if (settingsBackdropRemoveTimer) {
-    clearTimeout(settingsBackdropRemoveTimer);
-    settingsBackdropRemoveTimer = null;
-  }
   setFontListOpen(false);
-  settingsPanel.classList.remove('is-open');
+  closeSheet(settingsSheetBackdrop);
   settingsPanel.setAttribute('aria-hidden', 'true');
   settingsBtn.classList.remove('active');
-  settingsBackdrop.classList.remove('is-open');
-  settingsBackdropRemoveTimer = setTimeout(() => {
-    settingsBackdrop.remove();
-    settingsBackdropRemoveTimer = null;
-  }, 220);
 }
 
 // ── Load saved settings ───────────────────────────────
@@ -3034,33 +3018,24 @@ function stepReaderSize(delta) {
 
 // ── Toggle panel (handled above near backdrop) ────────
 
-// Backdrop to close settings
-const settingsBackdrop = document.createElement('div');
-settingsBackdrop.className = 'settings-backdrop';
-settingsBackdrop.addEventListener('click', closeSettings);
+settingsSheetBackdrop.addEventListener('click', e => {
+  if (e.target === settingsSheetBackdrop) closeSettings();
+});
 
 settingsBtn.addEventListener('click', e => {
   e.stopPropagation();
   showPaneChrome(biblePane);
-  const isOpen = settingsPanel.classList.contains('is-open');
+  const isOpen = settingsSheetBackdrop.classList.contains('open');
   if (isOpen) {
     closeSettings();
   } else {
-    if (settingsBackdropRemoveTimer) {
-      clearTimeout(settingsBackdropRemoveTimer);
-      settingsBackdropRemoveTimer = null;
-    }
     const s = getEffectiveSettings(loadSettings());
     buildFontList(s.font);
     syncPanelUI(s);
     setFontListOpen(false);
     settingsPanel.setAttribute('aria-hidden', 'false');
     settingsBtn.classList.add('active');
-    document.body.appendChild(settingsBackdrop);
-    requestAnimationFrame(() => {
-      settingsBackdrop.classList.add('is-open');
-      settingsPanel.classList.add('is-open');
-    });
+    openSheet(settingsSheetBackdrop);
   }
 });
 

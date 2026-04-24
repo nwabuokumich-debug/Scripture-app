@@ -48,53 +48,6 @@
           <button id="settings-btn" class="icon-btn settings-btn" type="button" title="Reader settings">Aa</button>
         </div>
 
-        <div id="settings-panel" class="settings-panel hidden">
-          <div class="sp-handle" aria-hidden="true"></div>
-          <div class="sp-toolbar">
-            <button id="sp-size-down" class="sp-toolbar-btn sp-size-step" type="button" aria-label="Decrease font size">
-              <span class="sp-size-step-label sp-size-step-small">A</span>
-            </button>
-            <button id="sp-size-up" class="sp-toolbar-btn sp-size-step" type="button" aria-label="Increase font size">
-              <span class="sp-size-step-label sp-size-step-large">A</span>
-            </button>
-            <button id="sp-font-toggle" class="sp-toolbar-btn sp-toolbar-icon" type="button" aria-label="Show font choices" aria-expanded="false">
-              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M5 6.5h10M5 10h10M5 13.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-              </svg>
-            </button>
-          </div>
-          <button id="sp-font-summary" class="sp-font-summary" type="button" aria-expanded="false">
-            <span class="sp-font-meta">
-              <span class="sp-summary-label">Font</span>
-              <span id="sp-font-current" class="sp-current-value">Source Serif 4</span>
-            </span>
-            <span class="sp-chevron" aria-hidden="true">›</span>
-          </button>
-          <div class="sp-font-list hidden" id="sp-font-list"></div>
-          <div class="sp-section sp-section-soft">
-            <div class="sp-label">Appearance</div>
-            <div class="sp-theme-grid">
-              <button class="sp-theme-btn sp-theme-card active" data-theme="light" type="button" aria-label="Light theme">
-                <span class="sp-theme-preview sp-theme-preview-light" aria-hidden="true">
-                  <span></span><span></span><span></span>
-                </span>
-              </button>
-              <button class="sp-theme-btn sp-theme-card" data-theme="dark" type="button" aria-label="Dark theme">
-                <span class="sp-theme-preview sp-theme-preview-dark" aria-hidden="true">
-                  <span></span><span></span><span></span>
-                </span>
-              </button>
-            </div>
-          </div>
-          <div class="sp-section sp-section-soft">
-            <div class="sp-label">Spacing</div>
-            <div class="sp-row sp-row-spaced">
-              <button class="sp-spacing-btn" data-spacing="1.6">Compact</button>
-              <button class="sp-spacing-btn active" data-spacing="2.1">Normal</button>
-              <button class="sp-spacing-btn" data-spacing="2.7">Relaxed</button>
-            </div>
-          </div>
-        </div>
       </header>
 
       <div id="chapter-bar" class="chapter-bar"></div>
@@ -200,6 +153,56 @@
       </div>
       <div id="search-results" class="search-results">
         <div class="search-empty">Search within the selected translation or jump to a passage reference.</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-sheet-backdrop" class="sheet-backdrop hidden settings-sheet-backdrop">
+    <div id="settings-panel" class="sheet settings-panel">
+      <div class="sp-handle" aria-hidden="true"></div>
+      <div class="sp-toolbar">
+        <button id="sp-size-down" class="sp-toolbar-btn sp-size-step" type="button" aria-label="Decrease font size">
+          <span class="sp-size-step-label sp-size-step-small">A</span>
+        </button>
+        <button id="sp-size-up" class="sp-toolbar-btn sp-size-step" type="button" aria-label="Increase font size">
+          <span class="sp-size-step-label sp-size-step-large">A</span>
+        </button>
+        <button id="sp-font-toggle" class="sp-toolbar-btn sp-toolbar-icon" type="button" aria-label="Show font choices" aria-expanded="false">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M5 6.5h10M5 10h10M5 13.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <button id="sp-font-summary" class="sp-font-summary" type="button" aria-expanded="false">
+        <span class="sp-font-meta">
+          <span class="sp-summary-label">Font</span>
+          <span id="sp-font-current" class="sp-current-value">Source Serif 4</span>
+        </span>
+        <span class="sp-chevron" aria-hidden="true">›</span>
+      </button>
+      <div class="sp-font-list hidden" id="sp-font-list"></div>
+      <div class="sp-section sp-section-soft">
+        <div class="sp-label">Appearance</div>
+        <div class="sp-theme-grid">
+          <button class="sp-theme-btn sp-theme-card active" data-theme="light" type="button" aria-label="Light theme">
+            <span class="sp-theme-preview sp-theme-preview-light" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </span>
+          </button>
+          <button class="sp-theme-btn sp-theme-card" data-theme="dark" type="button" aria-label="Dark theme">
+            <span class="sp-theme-preview sp-theme-preview-dark" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </span>
+          </button>
+        </div>
+      </div>
+      <div class="sp-section sp-section-soft">
+        <div class="sp-label">Spacing</div>
+        <div class="sp-row sp-row-spaced">
+          <button class="sp-spacing-btn" data-spacing="1.6">Compact</button>
+          <button class="sp-spacing-btn active" data-spacing="2.1">Normal</button>
+          <button class="sp-spacing-btn" data-spacing="2.7">Relaxed</button>
+        </div>
       </div>
     </div>
   </div>
