@@ -130,10 +130,11 @@ All scripts require `npm install` first (installs `@supabase/supabase-js`). Secr
 | `import-translations.js` | WEB, HNV, ERV, Darby, Webster, DRA, WNT (batch; can run one: `node import-translations.js web`) | `SUPABASE_SERVICE_KEY=xxx node import-translations.js` |
 | `import-web-dra.js` | WEB and DRA (OSIS XML format — separate from above) | `SUPABASE_SERVICE_KEY=xxx node import-web-dra.js` |
 | `import-greek.js` | NT Greek word tags + Strongs lexicon | `node import-greek.js` *(currently uses hardcoded secret)* |
+| `stack-admin.js` | Service-role admin tool for checking/searching/listing/updating live user stacks | `SUPABASE_SERVICE_KEY=xxx node stack-admin.js check` |
 | `clear.js` | Deletes all verses (use to re-import) | `node clear.js` *(currently uses hardcoded secret)* |
 | `clear-greek.js` | Deletes Greek data | `node clear-greek.js` *(currently uses hardcoded secret)* |
 
-Note: `import.js`, `import-greek.js`, `clear.js`, and `clear-greek.js` use a hardcoded service key. The other import scripts read `SUPABASE_SERVICE_KEY` from the environment — safer.
+Note: `import.js`, `import-greek.js`, `clear.js`, and `clear-greek.js` use a hardcoded service key. The other import/admin scripts read `SUPABASE_SERVICE_KEY` from the environment — safer.
 
 Note: `import-translations.js` and `import-web-dra.js` overlap on WEB/DRA — they use different source formats (CSV vs OSIS XML). Don't run both for the same translation.
 
