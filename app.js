@@ -543,6 +543,9 @@ function renderStacksSummary() {
   const totalPassages = stacks.reduce((sum, stack) => sum + countStackPassages(stack), 0);
   const activeStack = stacks.find(stack => stack.id === activeStackId);
   const syncMeta = getStackSyncMeta();
+  const signedOutCta = !authUser
+    ? `<button class="summary-inline-cta" type="button" id="summary-sign-in-btn">Sign in to sync</button>`
+    : '';
 
   if (!stacks.length) {
     stacksSummary.innerHTML = `
@@ -563,6 +566,7 @@ function renderStacksSummary() {
         <div class="stacks-summary-kicker">Collections</div>
         <h2>${totalPassages} saved passage${totalPassages !== 1 ? 's' : ''}</h2>
         <p>${totalCards} card${totalCards !== 1 ? 's' : ''} across ${stacks.length} stack${stacks.length !== 1 ? 's' : ''}${activeStack ? ` · Open: ${escHtml(activeStack.title)}` : ''}${authUser ? ` · ${escHtml(authUser.email)}` : ''}.</p>
+        ${signedOutCta}
       </div>
       <div class="stacks-summary-meta">
         <span class="summary-meta-pill">${stacks.length} stack${stacks.length !== 1 ? 's' : ''}</span>
@@ -572,6 +576,8 @@ function renderStacksSummary() {
       </div>
     </div>
   `;
+
+  stacksSummary.querySelector('#summary-sign-in-btn')?.addEventListener('click', openAuthModal);
 }
 
 // ── Custom modal (replaces prompt/confirm) ────────────
@@ -1617,7 +1623,7 @@ function getStackSyncMeta() {
 }
 
 function getAuthLabel() {
-  if (!authUser?.email) return 'Local Only';
+  if (!authUser?.email) return 'Sign In';
   const [name] = authUser.email.split('@');
   return name.length > 12 ? `${name.slice(0, 12)}…` : name;
 }
@@ -1640,7 +1646,7 @@ function refreshAuthUi() {
   const signedIn = !!authUser;
   const syncMeta = getStackSyncMeta();
 
-  authOpenBtn.textContent = signedIn ? getAuthLabel() : 'Local Only';
+  authOpenBtn.textContent = signedIn ? getAuthLabel() : 'Sign In';
   authOpenBtn.classList.toggle('is-signed-in', signedIn);
   accountBtn.classList.toggle('account-signed-in', signedIn);
 
