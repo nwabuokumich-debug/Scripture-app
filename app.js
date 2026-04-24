@@ -2928,17 +2928,29 @@ const spFontCurrent   = document.getElementById('sp-font-current');
 const spFontToggle    = document.getElementById('sp-font-toggle');
 const spSizeDownBtn   = document.getElementById('sp-size-down');
 const spSizeUpBtn     = document.getElementById('sp-size-up');
+let settingsBackdropRemoveTimer = null;
 
 // Render the settings panel at the document root so it sits above its backdrop.
 if (settingsPanel.parentElement !== document.body) {
   document.body.appendChild(settingsPanel);
 }
+settingsPanel.classList.remove('hidden');
+settingsPanel.setAttribute('aria-hidden', 'true');
 
 function closeSettings() {
+  if (settingsBackdropRemoveTimer) {
+    clearTimeout(settingsBackdropRemoveTimer);
+    settingsBackdropRemoveTimer = null;
+  }
   setFontListOpen(false);
-  settingsPanel.classList.add('hidden');
+  settingsPanel.classList.remove('is-open');
+  settingsPanel.setAttribute('aria-hidden', 'true');
   settingsBtn.classList.remove('active');
-  settingsBackdrop.remove();
+  settingsBackdrop.classList.remove('is-open');
+  settingsBackdropRemoveTimer = setTimeout(() => {
+    settingsBackdrop.remove();
+    settingsBackdropRemoveTimer = null;
+  }, 220);
 }
 
 // ── Load saved settings ───────────────────────────────
@@ -3024,23 +3036,31 @@ function stepReaderSize(delta) {
 
 // Backdrop to close settings
 const settingsBackdrop = document.createElement('div');
-settingsBackdrop.style.cssText = 'position:fixed;inset:0;z-index:499;';
+settingsBackdrop.className = 'settings-backdrop';
 settingsBackdrop.addEventListener('click', closeSettings);
 
 settingsBtn.addEventListener('click', e => {
   e.stopPropagation();
   showPaneChrome(biblePane);
-  const isOpen = !settingsPanel.classList.contains('hidden');
+  const isOpen = settingsPanel.classList.contains('is-open');
   if (isOpen) {
     closeSettings();
   } else {
+    if (settingsBackdropRemoveTimer) {
+      clearTimeout(settingsBackdropRemoveTimer);
+      settingsBackdropRemoveTimer = null;
+    }
     const s = getEffectiveSettings(loadSettings());
     buildFontList(s.font);
     syncPanelUI(s);
     setFontListOpen(false);
-    settingsPanel.classList.remove('hidden');
+    settingsPanel.setAttribute('aria-hidden', 'false');
     settingsBtn.classList.add('active');
     document.body.appendChild(settingsBackdrop);
+    requestAnimationFrame(() => {
+      settingsBackdrop.classList.add('is-open');
+      settingsPanel.classList.add('is-open');
+    });
   }
 });
 
