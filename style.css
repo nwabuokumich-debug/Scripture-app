@@ -132,10 +132,19 @@ body::before {
 }
 
 .stacks-top-actions {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.stacks-top-meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -202,6 +211,7 @@ body::before {
 .stacks-create-btn {
   gap: 7px;
   padding-inline: 14px;
+  margin-left: auto;
 }
 
 .stacks-create-btn svg {
@@ -1896,6 +1906,31 @@ body.theme-dark .auth-feedback.is-success {
 }
 
 /* ── Responsive ───────────────────────────── */
+@media (max-width: 760px) {
+  .stacks-top-bar {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    max-height: none;
+  }
+
+  .stacks-top-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .stacks-top-meta-actions {
+    flex: 1 1 240px;
+    justify-content: flex-start;
+  }
+
+  .stacks-create-btn {
+    margin-left: 0;
+  }
+}
+
 @media (min-width: 680px) {
   .verse-area { padding: 24px 40px 40px; max-width: 720px; margin: 0 auto; width: 100%; }
   .book-title { font-size: 2.4rem; }
@@ -1906,9 +1941,10 @@ body.theme-dark .auth-feedback.is-success {
   .book-chip-title { max-width: 120px; font-size: 0.9rem; }
   .top-translation { padding: 8px 10px; font-size: 0.7rem; }
   .icon-btn { width: 36px; height: 36px; }
-  .stacks-top-bar { align-items: center; }
+  .stacks-top-bar { gap: 10px; }
   .stacks-pane-title { font-size: 1.5rem; }
   .stacks-top-actions { gap: 6px; }
+  .stacks-top-meta-actions { gap: 6px; }
   .stacks-utility-btn { padding-inline: 10px; font-size: 0.72rem; }
   .auth-open-btn { padding-inline: 11px; font-size: 0.72rem; }
   .stacks-create-btn { padding-inline: 12px; }
