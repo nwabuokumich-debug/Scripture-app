@@ -19,6 +19,9 @@
 - Softened the hide-on-read behavior so the chrome waits for a longer scroll and eases out more gradually instead of disappearing too quickly.
 - Tightened verse spacing in both the Bible reader and stack cards by reducing per-verse vertical padding and row gaps.
 - Tightened verse spacing again in both the Bible reader and stack cards so adjacent verses sit even closer together.
+- Added Supabase-backed stack sync via a new `user_stack_state` table, with local `study_stacks` kept as the on-device cache and migration source.
+- Added account sign-in/sign-up/sign-out UI so stacks can sync across phone and laptop under one Supabase Auth user.
+- Added stack import/export controls so users can back up current stacks to JSON and merge-import them later before or after sync rollout.
 - Bumped the app asset cache versions in `index.html` and `sw.js` to force updated JS/CSS to load after changes.
 - Created this handoff document to capture the current app state, setup notes, and known issues for Claude.
 
@@ -27,10 +30,12 @@
 A **Bible study PWA** (Progressive Web App) installable on iPhone/Android. Features:
 - Multi-translation Bible reader (18 translations: KJV, BSB, WEB, AKJV, UKJV, MKJV, LITV, CPDV, Darby, Webster, DRA, YLT, ASV, BBE, NHEB, Jubilee, LEB, Rotherham)
 - Search within the currently selected translation
-- "Stacks" — user-created collections of saved verses and grouped passages (stored in localStorage)
+- "Stacks" — user-created collections of saved verses and grouped passages (cached in localStorage, synced to Supabase when signed in)
 - Greek word analysis for NT verses (word-by-word tagging + Strongs lexicon)
 - Compare translations side-by-side for a verse, selected verses, or the active stack block
 - Reader settings: font, size, spacing, light/dark theme
+- Account-based stack sync with Supabase Auth
+- JSON import/export for manual backup and restore of stacks
 
 ---
 
@@ -61,7 +66,7 @@ The anon key is fine to be public (it's a "publishable" key). The service key by
 - Git remote points to `https://github.com/nwabuokumich-debug/Scripture-app.git` and the current branch is `main`
 - `manifest.json` is configured for the path `/Scripture-app/` via `start_url` and `scope`
 - If the deployed path differs, update `manifest.json`
-- The service worker cache name is `scripture-v71` in `sw.js` — bump when deploying, and keep the `style.css?v=74` / `app.js?v=73` query strings in `index.html` aligned with the current build
+- The service worker cache name is `scripture-v72` in `sw.js` — bump when deploying, and keep the `style.css?v=75` / `app.js?v=74` query strings in `index.html` aligned with the current build
 
 ---
 
@@ -88,6 +93,12 @@ The anon key is fine to be public (it's a "publishable" key). The service key by
 
 **`strongs_lexicon`** *(Greek — may or may not exist yet)*
 - Stores Strongs concordance entries
+
+**`user_stack_state`**
+- `user_id` UUID PRIMARY KEY → references `auth.users.id`
+- `stacks` JSONB NOT NULL DEFAULT `[]`
+- `updated_at` TIMESTAMPTZ NOT NULL
+- Protected by RLS so each authenticated user can only read/write their own stack state
 - Imported via `import-greek.js`
 
 ### Indexes
@@ -167,12 +178,15 @@ Note: `import-translations.js` and `import-web-dra.js` overlap on WEB/DRA — th
 - Compare sheets group selected verses by translation, and stack compare uses the same renderer for one active stack block at a time
 
 ### Stacks
-- Stored entirely in `localStorage` as JSON
-- Key: `study_stacks`
-- Structure: `[{ id, title, verses: [{ passages: [{ ref, text }], note, addedAt }] }]`
+- Local cache key: `study_stacks`
+- Cloud table: `user_stack_state`
+- Structure: `[{ id, title, verses: [{ passages: [{ ref, text }], note, addedAt }], createdAt, updatedAt }]`
 - Stack cards can hold one or more passages, and legacy single-verse cards are migrated on load
 - `cardTranslations` keeps per-card translation overrides in memory only
-- No server-side storage — stacks are device-local only
+- When signed in, remote stacks are merged with local cached stacks by `id`, newer `updatedAt` wins, and the merged result is pushed back to Supabase
+- When signed out, the app falls back to local cached stacks only
+- Export downloads the normalized stack JSON as a backup file
+- Import accepts exported JSON and merges it into current stacks by `id`, with newer `updatedAt` winning
 
 ### Service Worker
 - Cache name must be bumped manually in `sw.js` to force cache invalidation (`scripture-v71` at the moment)
@@ -194,10 +208,10 @@ HNV, ERV, and WNT are not in the current `TRANSLATIONS` list in `app.js`, and `a
 However, `import-translations.js` still contains import logic for HNV, ERV, and WNT, so the repo does **not** prove why those translations were removed from the UI or whether their upstream source data was unusable.
 
 ### 4. Cache version must be bumped manually
-`sw.js` line 1: `const CACHE = 'scripture-v71'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
+`sw.js` line 1: `const CACHE = 'scripture-v73'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
 
 ### 5. Browser cache-busting query strings
-`index.html` loads `app.js?v=73` and `style.css?v=74` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
+`index.html` loads `app.js?v=75` and `style.css?v=76` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
 
 ### 6. PWA path is hardcoded
 `manifest.json` has `"start_url": "/Scripture-app/"` and `"scope": "/Scripture-app/"`. If the app ever moves to a different URL path, both values must be updated or the PWA install will break.
@@ -227,10 +241,10 @@ This is vanilla JS — no bundler, no TypeScript. `app.js` uses ES modules (`imp
 
 7. **To deploy**: the repo remote is GitHub and the current branch is `main`, but the deployment mechanism is not confirmed in this repo. If this is a GitHub Pages project site, the current manifest expects the app at `/Scripture-app/`.
 
-8. **No auth** — the app is fully public read-only. Supabase RLS should be set to allow public SELECT on `books`, `verses`, `nt_word_tags`, `strongs_lexicon`. No user accounts.
+8. **Auth now exists for stacks** — Bible/Greek reads are still public-read Supabase queries, but stack sync expects Supabase Auth plus the `user_stack_state` table + RLS. If the table is missing, the app still works locally and shows a sync issue state.
 
 9. **localStorage keys used**:
-   - `study_stacks` — saved stacks (JSON array)
+   - `study_stacks` — local stack cache + migration source
    - `active_translation` — last used translation slug
    - `reader_settings` — single JSON blob with all reader prefs (theme, font, size, spacing)
 

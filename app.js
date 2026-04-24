@@ -20,12 +20,17 @@ const searchBtn          = document.getElementById('search-btn');
 const searchOpenBtn      = document.getElementById('search-open');
 const searchCloseBtn     = document.getElementById('search-close');
 const searchResults      = document.getElementById('search-results');
+const accountBtn         = document.getElementById('account-btn');
 const otTab              = document.getElementById('tab-ot');
 const ntTab              = document.getElementById('tab-nt');
 const navBible           = document.getElementById('nav-bible');
 const navStacks          = document.getElementById('nav-stacks');
 const bottomNav          = document.querySelector('.bottom-nav');
 const newStackBtn        = document.getElementById('new-stack-btn');
+const importStacksBtn    = document.getElementById('import-stacks-btn');
+const exportStacksBtn    = document.getElementById('export-stacks-btn');
+const importStacksFile   = document.getElementById('import-stacks-file');
+const authOpenBtn        = document.getElementById('auth-open-btn');
 const translationLabel   = document.getElementById('translation-label');
 const bookPickerBtn      = document.getElementById('book-picker-btn');
 const bookChipTitle      = document.getElementById('book-chip-title');
@@ -35,6 +40,15 @@ const bookSheet          = document.getElementById('book-sheet');
 const bookSheetClose     = document.getElementById('book-sheet-close');
 const bookSheetDragZone  = document.getElementById('book-sheet-drag-zone');
 const searchSheetBackdrop = document.getElementById('search-sheet-backdrop');
+const authBackdrop       = document.getElementById('auth-backdrop');
+const authCopy           = document.getElementById('auth-copy');
+const authEmailInput     = document.getElementById('auth-email');
+const authPasswordInput  = document.getElementById('auth-password');
+const authFeedback       = document.getElementById('auth-feedback');
+const authSignInBtn      = document.getElementById('auth-sign-in');
+const authSignUpBtn      = document.getElementById('auth-sign-up');
+const authSignOutBtn     = document.getElementById('auth-sign-out');
+const authCloseBtn       = document.getElementById('auth-close');
 
 // ── State ─────────────────────────────────────────────
 let allBooks        = [];
@@ -59,6 +73,15 @@ let bookOrderMode   = localStorage.getItem('book_order_mode') || 'traditional';
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 'UKJV', mkjv: 'MKJV', litv: 'LITV', cpdv: 'CPDV', darby: 'Darby', webster: 'Webster', dra: 'DRA', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
 const chromeScrollState = new WeakMap();
+const STACKS_STORAGE_KEY = 'study_stacks';
+const STACKS_SYNC_DEBOUNCE_MS = 500;
+let stacksCache      = [];
+let authSession      = null;
+let authUser         = null;
+let stackSyncState   = 'local';
+let stackSyncTimer   = null;
+let stackSyncPromise = null;
+let stackSyncWarned  = false;
 // Migrate away from removed translations
 if (!TRANSLATIONS[activeTranslation]) { activeTranslation = 'kjv'; localStorage.setItem('active_translation', 'kjv'); }
 if (!['traditional', 'alphabetical'].includes(bookOrderMode)) bookOrderMode = 'traditional';
@@ -273,10 +296,45 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeBookSheet();
     closeSearchSheet();
+    closeAuthModal();
   }
 });
 bookPickerBtn.addEventListener('click', openBookSheet);
 searchOpenBtn.addEventListener('click', openSearchSheet);
+accountBtn.addEventListener('click', openAuthModal);
+authOpenBtn.addEventListener('click', openAuthModal);
+importStacksBtn.addEventListener('click', () => {
+  setAuthFeedback('');
+  importStacksFile.value = '';
+  importStacksFile.click();
+});
+exportStacksBtn.addEventListener('click', downloadStacksExport);
+authCloseBtn.addEventListener('click', closeAuthModal);
+authBackdrop.addEventListener('click', e => {
+  if (e.target === authBackdrop) closeAuthModal();
+});
+authSignInBtn.addEventListener('click', () => { void handleAuthSubmit('sign-in'); });
+authSignUpBtn.addEventListener('click', () => { void handleAuthSubmit('sign-up'); });
+authSignOutBtn.addEventListener('click', () => { void handleSignOut(); });
+authPasswordInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !authUser) {
+    e.preventDefault();
+    void handleAuthSubmit('sign-in');
+  }
+});
+importStacksFile.addEventListener('change', async e => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    await importStacksFromText(text);
+  } catch (error) {
+    console.error('Stack import failed', error);
+    showToast('Import failed while reading file');
+  } finally {
+    importStacksFile.value = '';
+  }
+});
 
 // Native-feeling pull-down dismiss for the books sheet.
 {
@@ -484,13 +542,14 @@ function renderStacksSummary() {
   const totalCards = stacks.reduce((sum, stack) => sum + stack.verses.length, 0);
   const totalPassages = stacks.reduce((sum, stack) => sum + countStackPassages(stack), 0);
   const activeStack = stacks.find(stack => stack.id === activeStackId);
+  const syncMeta = getStackSyncMeta();
 
   if (!stacks.length) {
     stacksSummary.innerHTML = `
       <div class="stacks-summary-card empty">
         <div class="stacks-summary-kicker">Collections</div>
         <h2>Build your first stack.</h2>
-        <p>Save verses from the reader, collect grouped passages, and keep notes together.</p>
+        <p>Save verses from the reader, collect grouped passages, and keep notes together.${authUser ? ' Your account is ready to sync them.' : ' Sign in when you want them on every device.'}</p>
         <button class="summary-cta" type="button" id="summary-new-stack-btn">Create Stack</button>
       </div>
     `;
@@ -503,11 +562,12 @@ function renderStacksSummary() {
       <div class="stacks-summary-copy">
         <div class="stacks-summary-kicker">Collections</div>
         <h2>${totalPassages} saved passage${totalPassages !== 1 ? 's' : ''}</h2>
-        <p>${totalCards} card${totalCards !== 1 ? 's' : ''} across ${stacks.length} stack${stacks.length !== 1 ? 's' : ''}${activeStack ? ` · Open: ${escHtml(activeStack.title)}` : ''}.</p>
+        <p>${totalCards} card${totalCards !== 1 ? 's' : ''} across ${stacks.length} stack${stacks.length !== 1 ? 's' : ''}${activeStack ? ` · Open: ${escHtml(activeStack.title)}` : ''}${authUser ? ` · ${escHtml(authUser.email)}` : ''}.</p>
       </div>
       <div class="stacks-summary-meta">
         <span class="summary-meta-pill">${stacks.length} stack${stacks.length !== 1 ? 's' : ''}</span>
         <span class="summary-meta-pill">${totalCards} card${totalCards !== 1 ? 's' : ''}</span>
+        <span class="summary-meta-pill ${syncMeta.className}">${syncMeta.label}</span>
         ${activeStack ? `<span class="summary-meta-pill is-active">Open now</span>` : ''}
       </div>
     </div>
@@ -579,6 +639,17 @@ function showConfirm(title, confirmLabel = 'Delete') {
 }
 
 // ── Boot ─────────────────────────────────────────────
+async function initAuth() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) console.error('Auth session lookup failed', error);
+
+  await applyAuthSession(data?.session ?? null);
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    void applyAuthSession(session);
+  });
+}
+
 async function init() {
   const { data, error } = await supabase
     .from('books')
@@ -591,9 +662,11 @@ async function init() {
   }
 
   allBooks = data;
+  await initAuth();
   await migrateOldPassages();
   syncBookOrderTabs();
   updateBibleChrome();
+  refreshAuthUi();
   renderBookList();
   renderStacksSummary();
   renderStacksList();
@@ -1423,12 +1496,358 @@ document.addEventListener('keydown', e => {
 // ══════════════════════════════════════════════════════
 
 // ── Storage ───────────────────────────────────────────
-function loadStacks() {
-  try { return JSON.parse(localStorage.getItem('study_stacks') || '[]'); }
+function nowTs() {
+  return Date.now();
+}
+
+function normalizePassage(passage) {
+  if (!passage) return null;
+  const ref = String(passage.ref || '').trim();
+  const text = String(passage.text || '').trim();
+  if (!ref || !text) return null;
+  return { ref, text };
+}
+
+function normalizeStackCard(card) {
+  const passages = Array.isArray(card?.passages)
+    ? card.passages.map(normalizePassage).filter(Boolean)
+    : normalizePassage(card?.ref ? { ref: card.ref, text: card.text } : null)
+      ? [normalizePassage({ ref: card.ref, text: card.text })]
+      : [];
+  if (!passages.length) return null;
+  return {
+    passages,
+    note: String(card?.note || ''),
+    addedAt: Number(card?.addedAt) || nowTs()
+  };
+}
+
+function normalizeStack(stack, idx = 0) {
+  const createdAt = Number(stack?.createdAt) || Number(stack?.updatedAt) || nowTs();
+  const verses = Array.isArray(stack?.verses)
+    ? stack.verses.map(normalizeStackCard).filter(Boolean)
+    : [];
+  return {
+    id: String(stack?.id || genId()),
+    title: String(stack?.title || `Stack ${idx + 1}`),
+    verses,
+    createdAt,
+    updatedAt: Number(stack?.updatedAt) || createdAt
+  };
+}
+
+function normalizeStacks(rawStacks) {
+  if (!Array.isArray(rawStacks)) return [];
+  return rawStacks.map((stack, idx) => normalizeStack(stack, idx));
+}
+
+function readLocalStacks() {
+  try { return normalizeStacks(JSON.parse(localStorage.getItem(STACKS_STORAGE_KEY) || '[]')); }
   catch { return []; }
 }
-function saveStacks(stacks) {
-  localStorage.setItem('study_stacks', JSON.stringify(stacks));
+
+function writeLocalStacks(stacks) {
+  localStorage.setItem(STACKS_STORAGE_KEY, JSON.stringify(normalizeStacks(stacks)));
+}
+
+function serializeStacks(stacks) {
+  return JSON.stringify(normalizeStacks(stacks));
+}
+
+function pickPreferredStack(current, incoming) {
+  if (!current) return incoming;
+  const currentUpdatedAt = Number(current.updatedAt) || 0;
+  const incomingUpdatedAt = Number(incoming.updatedAt) || 0;
+  if (incomingUpdatedAt !== currentUpdatedAt) {
+    return incomingUpdatedAt > currentUpdatedAt ? incoming : current;
+  }
+  return (incoming.verses?.length || 0) > (current.verses?.length || 0) ? incoming : current;
+}
+
+function mergeStacks(primaryStacks, secondaryStacks) {
+  const merged = [];
+  const byId = new Map();
+
+  function upsert(stack) {
+    if (!stack?.id) return;
+    const existingIdx = byId.get(stack.id);
+    if (existingIdx == null) {
+      byId.set(stack.id, merged.length);
+      merged.push(stack);
+      return;
+    }
+    merged[existingIdx] = pickPreferredStack(merged[existingIdx], stack);
+  }
+
+  normalizeStacks(primaryStacks).forEach(upsert);
+  normalizeStacks(secondaryStacks).forEach(upsert);
+  return merged;
+}
+
+function touchStack(stack) {
+  if (!stack) return stack;
+  stack.updatedAt = nowTs();
+  return stack;
+}
+
+function setStackSyncState(next) {
+  stackSyncState = next;
+  refreshAuthUi();
+  if (typeof renderStacksSummary === 'function') renderStacksSummary();
+}
+
+stacksCache = readLocalStacks();
+
+function loadStacks() {
+  return stacksCache;
+}
+
+function saveStacks(stacks, { remote = true } = {}) {
+  stacksCache = normalizeStacks(stacks);
+  writeLocalStacks(stacksCache);
+  if (remote) scheduleStackSync();
+  else refreshAuthUi();
+}
+
+function getStackSyncMeta() {
+  if (!authUser) return { label: 'Local only', className: 'is-warning' };
+  if (stackSyncState === 'error') return { label: 'Sync issue', className: 'is-warning' };
+  if (stackSyncState === 'syncing') return { label: 'Syncing', className: 'is-warning' };
+  return { label: 'Synced', className: 'is-sync' };
+}
+
+function getAuthLabel() {
+  if (!authUser?.email) return 'Local Only';
+  const [name] = authUser.email.split('@');
+  return name.length > 12 ? `${name.slice(0, 12)}…` : name;
+}
+
+function setAuthFeedback(message = '', tone = '') {
+  authFeedback.textContent = message;
+  authFeedback.classList.toggle('hidden', !message);
+  authFeedback.classList.remove('is-error', 'is-success');
+  if (tone) authFeedback.classList.add(tone === 'error' ? 'is-error' : 'is-success');
+}
+
+function setAuthBusy(isBusy) {
+  [authEmailInput, authPasswordInput, authSignInBtn, authSignUpBtn, authSignOutBtn, authCloseBtn].forEach(el => {
+    if (!el || el.classList.contains('hidden')) return;
+    el.disabled = isBusy;
+  });
+}
+
+function refreshAuthUi() {
+  const signedIn = !!authUser;
+  const syncMeta = getStackSyncMeta();
+
+  authOpenBtn.textContent = signedIn ? getAuthLabel() : 'Local Only';
+  authOpenBtn.classList.toggle('is-signed-in', signedIn);
+  accountBtn.classList.toggle('account-signed-in', signedIn);
+
+  authCopy.textContent = signedIn
+    ? `${authUser.email} is signed in. ${syncMeta.label === 'Synced' ? 'Stacks sync automatically.' : 'Stack sync is still settling.'}`
+    : 'Sign in to sync your stacks across phone and laptop.';
+
+  authEmailInput.classList.toggle('hidden', signedIn);
+  authPasswordInput.classList.toggle('hidden', signedIn);
+  authSignInBtn.classList.toggle('hidden', signedIn);
+  authSignUpBtn.classList.toggle('hidden', signedIn);
+  authSignOutBtn.classList.toggle('hidden', !signedIn);
+
+  if (signedIn) {
+    authEmailInput.value = authUser.email || '';
+    authPasswordInput.value = '';
+  }
+}
+
+function downloadStacksExport() {
+  const payload = serializeStacks(loadStacks());
+  const blob = new Blob([payload], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().slice(0, 10);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `scripture-stacks-${stamp}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  showToast('Stacks exported');
+}
+
+async function importStacksFromText(rawText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    showToast('Import failed: invalid JSON');
+    return;
+  }
+
+  const importedStacks = normalizeStacks(parsed);
+  if (!Array.isArray(parsed) || importedStacks.length === 0) {
+    showToast('Import failed: no valid stacks');
+    return;
+  }
+
+  const ok = await showConfirm(`Import ${importedStacks.length} stack${importedStacks.length !== 1 ? 's' : ''}? This merges with your current stacks.`, 'Import');
+  if (!ok) return;
+
+  const merged = mergeStacks(loadStacks(), importedStacks);
+  saveStacks(merged);
+  refreshStacksUi({ preserveView: true });
+  showToast(`Imported ${importedStacks.length} stack${importedStacks.length !== 1 ? 's' : ''}`);
+}
+
+function openAuthModal() {
+  refreshAuthUi();
+  authBackdrop.classList.remove('hidden');
+  if (!authUser) setTimeout(() => authEmailInput.focus(), 50);
+}
+
+function closeAuthModal() {
+  authBackdrop.classList.add('hidden');
+  authPasswordInput.value = '';
+  setAuthFeedback('');
+}
+
+async function flushStackSync() {
+  clearTimeout(stackSyncTimer);
+  stackSyncTimer = null;
+  if (!authUser) {
+    setStackSyncState('local');
+    return false;
+  }
+  if (stackSyncPromise) return stackSyncPromise;
+
+  const payload = normalizeStacks(stacksCache);
+  stackSyncPromise = (async () => {
+    setStackSyncState('syncing');
+    const { error } = await supabase
+      .from('user_stack_state')
+      .upsert({
+        user_id: authUser.id,
+        stacks: payload,
+        updated_at: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error('Stack sync failed', error);
+      setStackSyncState('error');
+      if (!stackSyncWarned) {
+        stackSyncWarned = true;
+        showToast('Cloud sync unavailable');
+      }
+      return false;
+    }
+
+    stackSyncWarned = false;
+    setStackSyncState('synced');
+    return true;
+  })().finally(() => {
+    stackSyncPromise = null;
+  });
+
+  return stackSyncPromise;
+}
+
+function scheduleStackSync() {
+  if (!authUser) {
+    setStackSyncState('local');
+    return;
+  }
+  clearTimeout(stackSyncTimer);
+  setStackSyncState('syncing');
+  stackSyncTimer = setTimeout(() => {
+    void flushStackSync();
+  }, STACKS_SYNC_DEBOUNCE_MS);
+}
+
+async function hydrateStacksFromCloud() {
+  const localStacks = readLocalStacks();
+  if (!authUser) {
+    stacksCache = localStacks;
+    setStackSyncState('local');
+    refreshStacksUi();
+    return;
+  }
+
+  setStackSyncState('syncing');
+  const { data, error } = await supabase
+    .from('user_stack_state')
+    .select('stacks')
+    .eq('user_id', authUser.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Failed to load cloud stacks', error);
+    stacksCache = localStacks;
+    setStackSyncState('error');
+    refreshStacksUi();
+    return;
+  }
+
+  const remoteStacks = normalizeStacks(data?.stacks || []);
+  const nextStacks = remoteStacks.length ? mergeStacks(remoteStacks, localStacks) : localStacks;
+  const shouldPushMergedCopy = serializeStacks(remoteStacks) !== serializeStacks(nextStacks);
+
+  saveStacks(nextStacks, { remote: false });
+  setStackSyncState('synced');
+  refreshStacksUi();
+
+  if (shouldPushMergedCopy) await flushStackSync();
+}
+
+async function applyAuthSession(session) {
+  authSession = session;
+  authUser = session?.user ?? null;
+  refreshAuthUi();
+  await hydrateStacksFromCloud();
+}
+
+async function handleAuthSubmit(mode) {
+  const email = authEmailInput.value.trim();
+  const password = authPasswordInput.value;
+  if (!email || !password) {
+    setAuthFeedback('Enter both email and password.', 'error');
+    return;
+  }
+
+  setAuthBusy(true);
+  setAuthFeedback('');
+
+  const action = mode === 'sign-up'
+    ? supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.href } })
+    : supabase.auth.signInWithPassword({ email, password });
+
+  const { data, error } = await action;
+  setAuthBusy(false);
+
+  if (error) {
+    setAuthFeedback(error.message, 'error');
+    return;
+  }
+
+  if (mode === 'sign-up' && !data?.session) {
+    setAuthFeedback('Account created. If confirmation email is enabled, finish that step, then sign in.', 'success');
+    authPasswordInput.value = '';
+    return;
+  }
+
+  closeAuthModal();
+  showToast(mode === 'sign-up' ? 'Account ready' : 'Signed in');
+}
+
+async function handleSignOut() {
+  setAuthBusy(true);
+  const { error } = await supabase.auth.signOut();
+  setAuthBusy(false);
+  if (error) {
+    setAuthFeedback(error.message, 'error');
+    return;
+  }
+  closeAuthModal();
+  showToast('Signed out');
 }
 
 // ── Mode toggle ───────────────────────────────────────
@@ -1463,6 +1882,27 @@ function setMode(mode) {
   if (!activeBook || !activeChapter) {
     showWelcome();
   }
+}
+
+function refreshStacksUi({ preserveView = false } = {}) {
+  const stacks = loadStacks();
+  renderStacksSummary();
+  renderStacksList();
+
+  if (appMode !== 'stacks') return;
+  if (!stacks.length) {
+    activeStackId = null;
+    clearStackCompareMode();
+    showStacksWelcome();
+    return;
+  }
+
+  const target = stacks.find(s => s.id === activeStackId)?.id || stacks[0].id;
+  if (preserveView && target === activeStackId) {
+    renderStackView(target, { preserveScroll: true });
+    return;
+  }
+  openStack(target);
 }
 
 navBible.addEventListener('click', () => setMode('bible'));
@@ -1825,7 +2265,8 @@ newStackBtn.addEventListener('click', async () => {
   const title = await showPrompt('Name your stack', 'e.g. Healing, Faith, Promises…');
   if (!title) return;
   const stacks = loadStacks();
-  const newStack = { id: genId(), title, verses: [], createdAt: Date.now() };
+  const stamp = nowTs();
+  const newStack = { id: genId(), title, verses: [], createdAt: stamp, updatedAt: stamp };
   stacks.push(newStack);
   saveStacks(stacks);
   setMode('stacks');
@@ -1838,6 +2279,7 @@ function updateStackTitle(id, title) {
   const stack = stacks.find(s => s.id === id);
   if (stack) {
     stack.title = title;
+    touchStack(stack);
     saveStacks(stacks);
     renderStacksSummary();
     renderStacksList();
@@ -1863,6 +2305,7 @@ function removeVerseFromStack(stackId, idx) {
   const stack = stacks.find(s => s.id === stackId);
   if (!stack) return;
   stack.verses.splice(idx, 1);
+  touchStack(stack);
   saveStacks(stacks);
   clearStackCompareMode();
   renderStacksSummary();
@@ -1875,6 +2318,7 @@ function updateVerseNote(stackId, idx, note) {
   const stack = stacks.find(s => s.id === stackId);
   if (!stack?.verses[idx]) return;
   stack.verses[idx].note = note;
+  touchStack(stack);
   saveStacks(stacks);
 }
 
@@ -1889,6 +2333,7 @@ function addPassageToCard(stackId, cardIdx, passageData) {
     return;
   }
   card.passages.push(passageData);
+  touchStack(stack);
   saveStacks(stacks);
   renderStacksSummary();
   renderStackView(stackId, { preserveScroll: true });
@@ -1901,6 +2346,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
   const card = stack.verses[cardIdx];
   if (!card.passages) card.passages = [{ ref: card.ref, text: card.text }];
   card.passages.splice(passageIdx, 1);
+  touchStack(stack);
   saveStacks(stacks);
   renderStacksSummary();
   renderStackView(stackId, { preserveScroll: true });
@@ -2041,6 +2487,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
           && new Set(newOrder).size === newOrder.length;
         if (valid) {
           st.verses = newOrder.map(i => st.verses[i]);
+          touchStack(st);
           saveStacks(stacks);
         }
         renderStacksSummary();
@@ -2063,6 +2510,7 @@ function addVerseToStack(stackId, verseData) {
   }
   const passages = verseData.passages || [{ ref: verseData.ref, text: verseData.text }];
   stack.verses.push({ passages, note: '', addedAt: Date.now() });
+  touchStack(stack);
   saveStacks(stacks);
   renderStacksSummary();
   showToast(`Added to "${stack.title}"`);
@@ -2301,7 +2749,8 @@ function openStackPicker() {
     const title = await showPrompt('Name your stack', 'e.g. Healing, Faith, Promises…');
     if (!title) return;
     const stks = loadStacks();
-    const newStack = { id: genId(), title, verses: [], createdAt: Date.now() };
+    const stamp = nowTs();
+    const newStack = { id: genId(), title, verses: [], createdAt: stamp, updatedAt: stamp };
     stks.push(newStack);
     saveStacks(stks);
     addVerseToStack(newStack.id, buildCombinedVerseData(versesToAdd));

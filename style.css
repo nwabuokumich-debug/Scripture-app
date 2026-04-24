@@ -131,6 +131,15 @@ body::before {
   min-width: 0;
 }
 
+.stacks-top-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .primary-pill-btn {
   display: inline-flex;
   align-items: center;
@@ -151,6 +160,43 @@ body::before {
 .primary-pill-btn:active {
   transform: scale(0.98);
   opacity: 0.92;
+}
+
+.secondary-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.72);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 11px 14px;
+  font-family: var(--font-ui);
+  font-size: 0.79rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.secondary-pill-btn:active {
+  transform: scale(0.98);
+  background: var(--surface);
+}
+
+.auth-open-btn.is-signed-in {
+  border-color: rgba(26,138,110,0.16);
+  background: rgba(26,138,110,0.08);
+  color: var(--teal);
+}
+
+.stacks-utility-btn {
+  padding-inline: 12px;
+  min-width: 0;
+}
+
+.icon-btn.account-active,
+.icon-btn.account-signed-in {
+  color: var(--accent);
 }
 
 .stacks-create-btn {
@@ -842,6 +888,18 @@ body::before {
   background: var(--text);
   border-color: transparent;
   color: var(--bg);
+}
+
+.summary-meta-pill.is-sync {
+  color: var(--teal);
+  border-color: rgba(26,138,110,0.16);
+  background: rgba(26,138,110,0.08);
+}
+
+.summary-meta-pill.is-warning {
+  color: #b45309;
+  border-color: rgba(180,83,9,0.16);
+  background: rgba(251,191,36,0.14);
 }
 
 .summary-cta {
@@ -1611,6 +1669,72 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
 .modal-confirm.danger { background: #dc2626; }
 .modal-confirm.danger:active { background: #b91c1c; }
 
+.auth-modal {
+  width: 420px;
+}
+
+.auth-copy {
+  color: var(--text-sec);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.auth-feedback {
+  margin: -6px 0 16px;
+  padding: 11px 13px;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text-sec);
+  font-size: 0.83rem;
+  line-height: 1.45;
+}
+
+.auth-feedback.is-error {
+  background: rgba(220,38,38,0.08);
+  color: #b91c1c;
+}
+
+.auth-feedback.is-success {
+  background: rgba(26,138,110,0.09);
+  color: var(--teal);
+}
+
+.auth-btn-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.auth-btn-row .modal-confirm,
+.auth-btn-row .modal-cancel,
+.auth-sign-out {
+  width: 100%;
+}
+
+.auth-sign-out {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-sec);
+  padding: 10px 24px;
+  border-radius: 99px;
+  font-family: var(--font-ui);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.auth-sign-out:active {
+  background: var(--surface);
+}
+
+.auth-close-row {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
 /* ── Settings panel ───────────────────────── */
 .settings-panel {
   position: fixed;
@@ -1726,6 +1850,14 @@ body.theme-dark .book-item-audio {
 body.theme-dark .summary-meta-pill {
   background: rgba(255,255,255,0.04);
 }
+body.theme-dark .summary-meta-pill.is-sync {
+  background: rgba(26,138,110,0.18);
+  color: #7ed6be;
+}
+body.theme-dark .summary-meta-pill.is-warning {
+  background: rgba(251,191,36,0.16);
+  color: #f9d67a;
+}
 body.theme-dark .stack-rail-card {
   background: linear-gradient(180deg, rgba(20,20,24,0.98), rgba(15,15,18,0.96));
 }
@@ -1739,6 +1871,28 @@ body.theme-dark .welcome-btn-primary,
 body.theme-dark .primary-pill-btn {
   background: #f0f0f4;
   color: #0a0a0c;
+}
+body.theme-dark .secondary-pill-btn,
+body.theme-dark .auth-sign-out {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.08);
+  color: #f0f0f4;
+}
+body.theme-dark .auth-open-btn.is-signed-in {
+  background: rgba(26,138,110,0.18);
+  color: #7ed6be;
+  border-color: rgba(26,138,110,0.22);
+}
+body.theme-dark .auth-feedback {
+  background: rgba(255,255,255,0.04);
+}
+body.theme-dark .auth-feedback.is-error {
+  background: rgba(220,38,38,0.16);
+  color: #f8a5a5;
+}
+body.theme-dark .auth-feedback.is-success {
+  background: rgba(26,138,110,0.18);
+  color: #7ed6be;
 }
 
 /* ── Responsive ───────────────────────────── */
@@ -1754,6 +1908,9 @@ body.theme-dark .primary-pill-btn {
   .icon-btn { width: 36px; height: 36px; }
   .stacks-top-bar { align-items: center; }
   .stacks-pane-title { font-size: 1.5rem; }
+  .stacks-top-actions { gap: 6px; }
+  .stacks-utility-btn { padding-inline: 10px; font-size: 0.72rem; }
+  .auth-open-btn { padding-inline: 11px; font-size: 0.72rem; }
   .stacks-create-btn { padding-inline: 12px; }
   .stacks-create-btn span { display: none; }
   .stacks-summary-card.compact { grid-template-columns: 1fr; }

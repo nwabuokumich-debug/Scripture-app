@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bitter:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Inter:wght@300;400;500;600;700&family=Josefin+Sans:wght@300;400;600&family=Lato:ital,wght@0,400;0,700;1,400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Noto+Serif:ital,wght@0,400;0,700;1,400&family=Nunito:wght@400;500;600&family=Open+Sans:ital,wght@0,400;0,600;1,400&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Raleway:wght@400;500;600&family=Roboto:ital,wght@0,400;0,500;1,400&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=Spectral:ital,wght@0,400;0,500;1,400&family=Vollkorn:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=74" />
+  <link rel="stylesheet" href="style.css?v=76" />
 </head>
 <body>
 
@@ -33,6 +33,12 @@
           <button id="translation-label" class="top-translation" type="button">KJV</button>
         </div>
         <div class="top-bar-actions">
+          <button id="account-btn" class="icon-btn" type="button" title="Account">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="10" cy="6.3" r="3.1" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M4.8 16.2c.7-2.6 2.8-4.2 5.2-4.2s4.5 1.6 5.2 4.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </button>
           <button id="search-open" class="icon-btn" type="button" title="Search Bible">
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.7"/>
@@ -93,12 +99,17 @@
     <main id="stacks-pane" class="pane" aria-hidden="true">
       <header class="top-bar stacks-top-bar">
         <h1 class="stacks-pane-title">Stacks</h1>
-        <button id="new-stack-btn" class="primary-pill-btn stacks-create-btn" type="button">
-          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-          <span>New Stack</span>
-        </button>
+        <div class="stacks-top-actions">
+          <button id="import-stacks-btn" class="secondary-pill-btn stacks-utility-btn" type="button">Import</button>
+          <button id="export-stacks-btn" class="secondary-pill-btn stacks-utility-btn" type="button">Export</button>
+          <button id="auth-open-btn" class="secondary-pill-btn auth-open-btn" type="button">Local Only</button>
+          <button id="new-stack-btn" class="primary-pill-btn stacks-create-btn" type="button">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <span>New Stack</span>
+          </button>
+        </div>
       </header>
 
       <div id="stacks-content" class="content-area">
@@ -199,13 +210,33 @@
     </div>
   </div>
 
+  <div id="auth-backdrop" class="modal-backdrop hidden">
+    <div class="modal auth-modal">
+      <div class="modal-title">Account</div>
+      <div id="auth-copy" class="auth-copy">Sign in to sync your stacks across devices.</div>
+      <input class="modal-input" id="auth-email" type="email" placeholder="Email" autocomplete="email" />
+      <input class="modal-input" id="auth-password" type="password" placeholder="Password" autocomplete="current-password" />
+      <div id="auth-feedback" class="auth-feedback hidden"></div>
+      <div class="auth-btn-row">
+        <button class="modal-confirm" id="auth-sign-in">Sign In</button>
+        <button class="modal-cancel" id="auth-sign-up">Create Account</button>
+      </div>
+      <button class="auth-sign-out hidden" id="auth-sign-out" type="button">Sign Out</button>
+      <div class="modal-btns auth-close-row">
+        <button class="modal-cancel" id="auth-close" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <input id="import-stacks-file" type="file" accept="application/json,.json" class="hidden" />
+
   <script src="config.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js');
     }
   </script>
-  <script type="module" src="app.js?v=73"></script>
+  <script type="module" src="app.js?v=75"></script>
 
 </body>
 </html>
