@@ -155,8 +155,12 @@ function resetChromeScroll(container, pane) {
   showPaneChrome(pane);
 }
 
-function bindPaneChromeScroll(container, pane, { minScrollTop = 72, hideDistance = 36, showDistance = 18 } = {}) {
-  const state = { lastTop: 0, lastDirection: '', distance: 0, ticking: false };
+function bindPaneChromeScroll(
+  container,
+  pane,
+  { minScrollTop = 72, hideDistance = 36, showDistance = 18, toggleCooldownMs = 260 } = {}
+) {
+  const state = { lastTop: 0, lastDirection: '', distance: 0, ticking: false, lastToggleAt: 0 };
   chromeScrollState.set(container, state);
 
   container.addEventListener('scroll', () => {
@@ -189,11 +193,20 @@ function bindPaneChromeScroll(container, pane, { minScrollTop = 72, hideDistance
       }
       state.distance += Math.abs(delta);
 
+      const now = Date.now();
+      const canToggle = now - state.lastToggleAt >= toggleCooldownMs;
+
       if (direction === 'down' && top >= minScrollTop && state.distance >= hideDistance) {
-        setPaneChromeCollapsed(pane, true);
+        if (canToggle && !pane.classList.contains('chrome-collapsed')) {
+          setPaneChromeCollapsed(pane, true);
+          state.lastToggleAt = now;
+        }
         state.distance = 0;
       } else if (direction === 'up' && state.distance >= showDistance) {
-        showPaneChrome(pane);
+        if (canToggle && pane.classList.contains('chrome-collapsed')) {
+          showPaneChrome(pane);
+          state.lastToggleAt = now;
+        }
         state.distance = 0;
       }
 
@@ -394,9 +407,14 @@ importStacksFile.addEventListener('change', async e => {
 
 // ── Translation picker ────────────────────────────────
 let activeTranslationPicker = null;
+let activeTranslationPickerAnchor = null;
 
 function openTranslationPicker(anchorEl, currentKey, onSelect) {
   showPaneChrome(biblePane);
+  if (activeTranslationPicker && activeTranslationPickerAnchor === anchorEl) {
+    closeTranslationPicker();
+    return;
+  }
   closeTranslationPicker();
   const picker = document.createElement('div');
   picker.className = 'translation-picker';
@@ -407,6 +425,7 @@ function openTranslationPicker(anchorEl, currentKey, onSelect) {
   `).join('');
   document.body.appendChild(picker);
   activeTranslationPicker = picker;
+  activeTranslationPickerAnchor = anchorEl;
   requestAnimationFrame(() => picker.classList.add('open'));
 
   picker.querySelectorAll('.translation-picker-item').forEach(item => {
@@ -424,6 +443,7 @@ function closeTranslationPicker() {
   if (!activeTranslationPicker) return;
   const picker = activeTranslationPicker;
   activeTranslationPicker = null;
+  activeTranslationPickerAnchor = null;
   picker.classList.remove('open');
   setTimeout(() => picker.remove(), 380);
 }
@@ -1921,18 +1941,21 @@ function renderStacksList() {
   renderStacksSummary();
   if (!stacks.length) return;
 
-  stackList.innerHTML = stacks.map(stack => `
-    <button class="stack-rail-card${stack.id === activeStackId ? ' active' : ''}" data-id="${escHtml(stack.id)}" type="button">
-      <span class="stack-rail-badge">${escHtml((stack.title || 'S').slice(0, 1).toUpperCase())}</span>
-      <span class="stack-rail-copy">
-        <span class="stack-rail-title">${escHtml(stack.title)}</span>
-        <span class="stack-rail-meta">${countStackPassages(stack)} saved passage${countStackPassages(stack) !== 1 ? 's' : ''}</span>
+  const activeStack = stacks.find(stack => stack.id === activeStackId) || stacks[0];
+  stackList.innerHTML = `
+    <button class="stack-switcher-btn" id="stack-switcher-btn" type="button" aria-expanded="false">
+      <span class="stack-switcher-copy">
+        <span class="stack-switcher-label">Current stack</span>
+        <span class="stack-switcher-title">${escHtml(activeStack.title)}</span>
       </span>
+      <span class="stack-switcher-meta">${stacks.length} stack${stacks.length !== 1 ? 's' : ''}</span>
+      <span class="stack-switcher-chevron" aria-hidden="true">›</span>
     </button>
-  `).join('');
+  `;
 
-  stackList.querySelectorAll('.stack-rail-card').forEach(btn => {
-    btn.addEventListener('click', () => openStack(btn.dataset.id));
+  stackList.querySelector('#stack-switcher-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    openStackSwitcher();
   });
 }
 
@@ -2010,9 +2033,24 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
           </div>
           ${passagesHtml}
           <div class="stack-card-actions">
-            <button class="add-passage-btn" data-idx="${idx}" title="Add scripture">＋</button>
-            <button class="note-toggle" data-idx="${idx}" title="Note">✎</button>
-            <button class="compare-card-btn" data-idx="${idx}" title="Compare translations">⟷</button>
+            <button class="add-passage-btn" data-idx="${idx}" title="Add scripture">
+              <svg class="stack-action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              <span class="stack-action-label">Add</span>
+            </button>
+            <button class="note-toggle" data-idx="${idx}" title="Note">
+              <svg class="stack-action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M6 14.2 5 15l.8-2.6L13 5.2a1.6 1.6 0 0 1 2.2 0l.6.6a1.6 1.6 0 0 1 0 2.2L8.6 15.2l-2.6.8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              </svg>
+              <span class="stack-action-label">Note</span>
+            </button>
+            <button class="compare-card-btn" data-idx="${idx}" title="Compare translations">
+              <svg class="stack-action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M3.8 7.2h12.4M12.8 4.4l3.4 2.8-3.4 2.8M16.2 12.8H3.8M7.2 15.6l-3.4-2.8L7.2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="stack-action-label">Compare</span>
+            </button>
             <button class="card-translation-btn" data-idx="${idx}" title="Switch translation">${TRANSLATIONS[cardTranslations.get(idx) || 'kjv']}</button>
           </div>
           <div class="add-passage-area hidden">
@@ -2768,8 +2806,80 @@ function openStackPicker() {
   }, 0);
 }
 
+function openStackSwitcher() {
+  if (activePicker?.dataset.role === 'stack-switcher') {
+    closeStackPicker();
+    return;
+  }
+
+  closeStackPicker();
+  const stacks = loadStacks();
+  if (!stacks.length) return;
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'stack-switcher-backdrop';
+  backdrop.dataset.role = 'stack-switcher';
+  backdrop.innerHTML = `
+    <div class="stack-picker stack-picker-list">
+      <div class="stack-picker-title">Your Stacks</div>
+      ${stacks.map(stack => `
+        <button class="stack-picker-item stack-picker-stack-item${stack.id === activeStackId ? ' active' : ''}" data-id="${escHtml(stack.id)}" type="button">
+          <span class="stack-picker-stack-copy">
+            <span class="stack-picker-stack-title">${escHtml(stack.title)}</span>
+            <span class="stack-picker-stack-meta">${countStackPassages(stack)} saved passage${countStackPassages(stack) !== 1 ? 's' : ''}</span>
+          </span>
+          ${stack.id === activeStackId ? '<span class="stack-picker-check" aria-hidden="true">✓</span>' : ''}
+        </button>
+      `).join('')}
+      <div class="stack-picker-divider"></div>
+      <button class="stack-picker-new" type="button">+ New Stack</button>
+    </div>
+  `;
+
+  document.body.appendChild(backdrop);
+  activePicker = backdrop;
+
+  const picker = backdrop.querySelector('.stack-picker-list');
+  picker?.addEventListener('click', e => e.stopPropagation());
+  backdrop.addEventListener('click', closeStackPicker);
+
+  requestAnimationFrame(() => backdrop.classList.add('open'));
+
+  backdrop.querySelectorAll('.stack-picker-stack-item').forEach(item => {
+    item.addEventListener('click', e => {
+      e.stopPropagation();
+      openStack(item.dataset.id);
+      closeStackPicker();
+    });
+  });
+
+  backdrop.querySelector('.stack-picker-new')?.addEventListener('click', async e => {
+    e.stopPropagation();
+    closeStackPicker();
+    const title = await showPrompt('Name your stack', 'e.g. Healing, Faith, Promises…');
+    if (!title) return;
+    const stks = loadStacks();
+    const stamp = nowTs();
+    const newStack = { id: genId(), title, verses: [], createdAt: stamp, updatedAt: stamp };
+    stks.push(newStack);
+    saveStacks(stks);
+    setMode('stacks');
+    openStack(newStack.id);
+  });
+}
+
 function closeStackPicker() {
-  if (activePicker) { activePicker.remove(); activePicker = null; }
+  if (!activePicker) return;
+  const picker = activePicker;
+  activePicker = null;
+
+  if (picker.dataset.role === 'stack-switcher') {
+    picker.classList.remove('open');
+    setTimeout(() => picker.remove(), 220);
+    return;
+  }
+
+  picker.remove();
 }
 
 // ══════════════════════════════════════════════════════
@@ -2790,6 +2900,7 @@ const FONTS = [
   { name: 'Bitter',            stack: "'Bitter', Georgia, serif" },
   { name: 'PT Serif',          stack: "'PT Serif', Georgia, serif" },
   { name: 'Noto Serif',        stack: "'Noto Serif', Georgia, serif" },
+  { name: 'San Francisco',     stack: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', system-ui, sans-serif" },
   { name: 'Inter',             stack: "'Inter', system-ui, sans-serif" },
   { name: 'Roboto',            stack: "'Roboto', system-ui, sans-serif" },
   { name: 'Open Sans',         stack: "'Open Sans', system-ui, sans-serif" },
@@ -2799,10 +2910,24 @@ const FONTS = [
   { name: 'Josefin Sans',      stack: "'Josefin Sans', system-ui, sans-serif" },
 ];
 
-const settingsBtn   = document.getElementById('settings-btn');
-const settingsPanel = document.getElementById('settings-panel');
-const settingsClose = document.getElementById('settings-close');
-const spFontList    = document.getElementById('sp-font-list');
+const DEFAULT_READER_SETTINGS = {
+  theme: 'light',
+  size: '1.08rem',
+  spacing: '2.1',
+  font: 'Source Serif 4',
+};
+const READER_SIZE_MIN = 0.88;
+const READER_SIZE_MAX = 1.9;
+const READER_SIZE_STEP = 0.06;
+
+const settingsBtn     = document.getElementById('settings-btn');
+const settingsPanel   = document.getElementById('settings-panel');
+const spFontList      = document.getElementById('sp-font-list');
+const spFontSummary   = document.getElementById('sp-font-summary');
+const spFontCurrent   = document.getElementById('sp-font-current');
+const spFontToggle    = document.getElementById('sp-font-toggle');
+const spSizeDownBtn   = document.getElementById('sp-size-down');
+const spSizeUpBtn     = document.getElementById('sp-size-up');
 
 // Render the settings panel at the document root so it sits above its backdrop.
 if (settingsPanel.parentElement !== document.body) {
@@ -2810,11 +2935,11 @@ if (settingsPanel.parentElement !== document.body) {
 }
 
 function closeSettings() {
+  setFontListOpen(false);
   settingsPanel.classList.add('hidden');
   settingsBtn.classList.remove('active');
   settingsBackdrop.remove();
 }
-settingsClose.addEventListener('click', closeSettings);
 
 // ── Load saved settings ───────────────────────────────
 function loadSettings() {
@@ -2823,21 +2948,40 @@ function loadSettings() {
 }
 function saveSettings(s) { localStorage.setItem('reader_settings', JSON.stringify(s)); }
 
+function getEffectiveSettings(settings = loadSettings()) {
+  return { ...DEFAULT_READER_SETTINGS, ...settings };
+}
+
+function clampReaderSize(value) {
+  return Math.min(READER_SIZE_MAX, Math.max(READER_SIZE_MIN, value));
+}
+
+function getReaderSizeValue(settings = loadSettings()) {
+  const value = parseFloat(getEffectiveSettings(settings).size);
+  return Number.isFinite(value) ? clampReaderSize(value) : parseFloat(DEFAULT_READER_SETTINGS.size);
+}
+
+function formatReaderSize(value) {
+  return `${parseFloat(clampReaderSize(value).toFixed(2))}rem`;
+}
+
 function applySettings(s) {
+  const settings = getEffectiveSettings(s);
   // Theme
-  document.body.classList.toggle('theme-dark', s.theme === 'dark');
-  document.querySelector('meta[name="theme-color"]').content = s.theme === 'dark' ? '#0c0c10' : '#e74252';
+  document.body.classList.toggle('theme-dark', settings.theme === 'dark');
+  document.querySelector('meta[name="theme-color"]').content = settings.theme === 'dark' ? '#0c0c10' : '#e74252';
   // Font
-  const font = FONTS.find(f => f.name === s.font) || FONTS[0];
+  const font = FONTS.find(f => f.name === settings.font) || FONTS[0];
   document.documentElement.style.setProperty('--font-read', font.stack);
   // Size
-  if (s.size) document.documentElement.style.setProperty('--reader-size', s.size);
+  document.documentElement.style.setProperty('--reader-size', formatReaderSize(getReaderSizeValue(settings)));
   // Spacing
-  if (s.spacing) document.documentElement.style.setProperty('--reader-spacing', s.spacing);
+  document.documentElement.style.setProperty('--reader-spacing', settings.spacing);
 }
 
 // ── Build font list ───────────────────────────────────
 function buildFontList(currentFont) {
+  spFontCurrent.textContent = currentFont;
   spFontList.innerHTML = '';
   FONTS.forEach(f => {
     const div = document.createElement('div');
@@ -2845,12 +2989,35 @@ function buildFontList(currentFont) {
     div.style.fontFamily = f.stack;
     div.innerHTML = `<span>${escHtml(f.name)}</span><span class="sp-check">✓</span>`;
     div.addEventListener('click', () => {
-      const s = loadSettings(); s.font = f.name; saveSettings(s); applySettings(s);
-      spFontList.querySelectorAll('.sp-font-item').forEach(el => el.classList.remove('active'));
-      div.classList.add('active');
+      const s = loadSettings();
+      s.font = f.name;
+      saveSettings(s);
+      applySettings(s);
+      syncPanelUI(s);
+      setFontListOpen(false);
     });
     spFontList.appendChild(div);
   });
+}
+
+function setFontListOpen(isOpen) {
+  spFontList.classList.toggle('hidden', !isOpen);
+  spFontSummary.classList.toggle('active', isOpen);
+  spFontSummary.setAttribute('aria-expanded', String(isOpen));
+  spFontToggle.setAttribute('aria-expanded', String(isOpen));
+}
+
+function toggleFontList(forceOpen) {
+  const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : spFontList.classList.contains('hidden');
+  setFontListOpen(shouldOpen);
+}
+
+function stepReaderSize(delta) {
+  const s = loadSettings();
+  s.size = formatReaderSize(getReaderSizeValue(s) + delta);
+  saveSettings(s);
+  applySettings(s);
+  syncPanelUI(s);
 }
 
 // ── Toggle panel (handled above near backdrop) ────────
@@ -2865,13 +3032,12 @@ settingsBtn.addEventListener('click', e => {
   showPaneChrome(biblePane);
   const isOpen = !settingsPanel.classList.contains('hidden');
   if (isOpen) {
-    settingsPanel.classList.add('hidden');
-    settingsBtn.classList.remove('active');
-    settingsBackdrop.remove();
+    closeSettings();
   } else {
-    const s = loadSettings();
-    buildFontList(s.font || 'Source Serif 4');
+    const s = getEffectiveSettings(loadSettings());
+    buildFontList(s.font);
     syncPanelUI(s);
+    setFontListOpen(false);
     settingsPanel.classList.remove('hidden');
     settingsBtn.classList.add('active');
     document.body.appendChild(settingsBackdrop);
@@ -2879,45 +3045,52 @@ settingsBtn.addEventListener('click', e => {
 });
 
 function syncPanelUI(s) {
+  const settings = getEffectiveSettings(s);
   document.querySelectorAll('.sp-theme-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.theme === (s.theme || 'light'));
-  });
-  document.querySelectorAll('.sp-size-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.size === (s.size || '1.08rem'));
+    btn.classList.toggle('active', btn.dataset.theme === settings.theme);
   });
   document.querySelectorAll('.sp-spacing-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.spacing === (s.spacing || '2.1'));
+    btn.classList.toggle('active', btn.dataset.spacing === settings.spacing);
+  });
+  spFontCurrent.textContent = settings.font;
+  spSizeDownBtn.disabled = getReaderSizeValue(settings) <= READER_SIZE_MIN + 0.001;
+  spSizeUpBtn.disabled = getReaderSizeValue(settings) >= READER_SIZE_MAX - 0.001;
+  spFontList.querySelectorAll('.sp-font-item').forEach(item => {
+    item.classList.toggle('active', item.firstElementChild?.textContent === settings.font);
   });
 }
 
 // ── Theme buttons ─────────────────────────────────────
 document.querySelectorAll('.sp-theme-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    const s = loadSettings(); s.theme = btn.dataset.theme; saveSettings(s); applySettings(s);
-    document.querySelectorAll('.sp-theme-btn').forEach(b => b.classList.toggle('active', b === btn));
+    const s = loadSettings();
+    s.theme = btn.dataset.theme;
+    saveSettings(s);
+    applySettings(s);
+    syncPanelUI(s);
   });
 });
 
-// ── Size buttons ──────────────────────────────────────
-document.querySelectorAll('.sp-size-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const s = loadSettings(); s.size = btn.dataset.size; saveSettings(s); applySettings(s);
-    document.querySelectorAll('.sp-size-btn').forEach(b => b.classList.toggle('active', b === btn));
-  });
-});
+spSizeDownBtn.addEventListener('click', () => stepReaderSize(-READER_SIZE_STEP));
+spSizeUpBtn.addEventListener('click', () => stepReaderSize(READER_SIZE_STEP));
+spFontSummary.addEventListener('click', () => toggleFontList());
+spFontToggle.addEventListener('click', () => toggleFontList());
 
 // ── Spacing buttons ───────────────────────────────────
 document.querySelectorAll('.sp-spacing-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    const s = loadSettings(); s.spacing = btn.dataset.spacing; saveSettings(s); applySettings(s);
-    document.querySelectorAll('.sp-spacing-btn').forEach(b => b.classList.toggle('active', b === btn));
+    const s = loadSettings();
+    s.spacing = btn.dataset.spacing;
+    saveSettings(s);
+    applySettings(s);
+    syncPanelUI(s);
   });
 });
 
 // ── Apply on boot ─────────────────────────────────────
 applySettings(loadSettings());
-bindPaneChromeScroll(bibleContent, biblePane, { minScrollTop: 108, hideDistance: 68, showDistance: 24 });
-bindPaneChromeScroll(stacksContent, stacksPane, { minScrollTop: 84, hideDistance: 56, showDistance: 24 });
+bindPaneChromeScroll(bibleContent, biblePane, { minScrollTop: 168, hideDistance: 128, showDistance: 56, toggleCooldownMs: 420 });
+bindPaneChromeScroll(stacksContent, stacksPane, { minScrollTop: 148, hideDistance: 120, showDistance: 56, toggleCooldownMs: 420 });
 resetChromeScroll(bibleContent, biblePane);
 resetChromeScroll(stacksContent, stacksPane);
 syncBottomNavChrome();

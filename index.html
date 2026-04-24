@@ -49,37 +49,50 @@
         </div>
 
         <div id="settings-panel" class="settings-panel hidden">
-          <div class="sp-header">
-            <span class="sp-title">Reader Settings</span>
-            <button id="settings-close" class="sp-close">×</button>
+          <div class="sp-handle" aria-hidden="true"></div>
+          <div class="sp-toolbar">
+            <button id="sp-size-down" class="sp-toolbar-btn sp-size-step" type="button" aria-label="Decrease font size">
+              <span class="sp-size-step-label sp-size-step-small">A</span>
+            </button>
+            <button id="sp-size-up" class="sp-toolbar-btn sp-size-step" type="button" aria-label="Increase font size">
+              <span class="sp-size-step-label sp-size-step-large">A</span>
+            </button>
+            <button id="sp-font-toggle" class="sp-toolbar-btn sp-toolbar-icon" type="button" aria-label="Show font choices" aria-expanded="false">
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M5 6.5h10M5 10h10M5 13.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </button>
           </div>
-          <div class="sp-section">
-            <div class="sp-label">Theme</div>
-            <div class="sp-row">
-              <button class="sp-theme-btn active" data-theme="light">Light</button>
-              <button class="sp-theme-btn" data-theme="dark">Dark</button>
+          <button id="sp-font-summary" class="sp-font-summary" type="button" aria-expanded="false">
+            <span class="sp-font-meta">
+              <span class="sp-summary-label">Font</span>
+              <span id="sp-font-current" class="sp-current-value">Source Serif 4</span>
+            </span>
+            <span class="sp-chevron" aria-hidden="true">›</span>
+          </button>
+          <div class="sp-font-list hidden" id="sp-font-list"></div>
+          <div class="sp-section sp-section-soft">
+            <div class="sp-label">Appearance</div>
+            <div class="sp-theme-grid">
+              <button class="sp-theme-btn sp-theme-card active" data-theme="light" type="button" aria-label="Light theme">
+                <span class="sp-theme-preview sp-theme-preview-light" aria-hidden="true">
+                  <span></span><span></span><span></span>
+                </span>
+              </button>
+              <button class="sp-theme-btn sp-theme-card" data-theme="dark" type="button" aria-label="Dark theme">
+                <span class="sp-theme-preview sp-theme-preview-dark" aria-hidden="true">
+                  <span></span><span></span><span></span>
+                </span>
+              </button>
             </div>
           </div>
-          <div class="sp-section">
-            <div class="sp-label">Size</div>
-            <div class="sp-row">
-              <button class="sp-size-btn" data-size="0.9rem" style="font-size:0.78rem">A</button>
-              <button class="sp-size-btn active" data-size="1.08rem" style="font-size:1rem">A</button>
-              <button class="sp-size-btn" data-size="1.25rem" style="font-size:1.22rem">A</button>
-              <button class="sp-size-btn" data-size="1.45rem" style="font-size:1.45rem">A</button>
-            </div>
-          </div>
-          <div class="sp-section">
+          <div class="sp-section sp-section-soft">
             <div class="sp-label">Spacing</div>
-            <div class="sp-row">
+            <div class="sp-row sp-row-spaced">
               <button class="sp-spacing-btn" data-spacing="1.6">Compact</button>
               <button class="sp-spacing-btn active" data-spacing="2.1">Normal</button>
               <button class="sp-spacing-btn" data-spacing="2.7">Relaxed</button>
             </div>
-          </div>
-          <div class="sp-section">
-            <div class="sp-label">Font</div>
-            <div class="sp-font-list" id="sp-font-list"></div>
           </div>
         </div>
       </header>
