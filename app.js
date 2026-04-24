@@ -544,7 +544,7 @@ function renderStacksSummary() {
   const activeStack = stacks.find(stack => stack.id === activeStackId);
   const syncMeta = getStackSyncMeta();
   const signedOutCta = !authUser
-    ? `<button class="summary-inline-cta" type="button" id="summary-sign-in-btn">Sign in to sync</button>`
+    ? `<button class="summary-inline-cta" type="button" id="summary-sign-in-btn">Set up sync</button>`
     : '';
 
   if (!stacks.length) {
@@ -1623,7 +1623,7 @@ function getStackSyncMeta() {
 }
 
 function getAuthLabel() {
-  if (!authUser?.email) return 'Sign In';
+  if (!authUser?.email) return 'Account';
   const [name] = authUser.email.split('@');
   return name.length > 12 ? `${name.slice(0, 12)}…` : name;
 }
@@ -1646,13 +1646,13 @@ function refreshAuthUi() {
   const signedIn = !!authUser;
   const syncMeta = getStackSyncMeta();
 
-  authOpenBtn.textContent = signedIn ? getAuthLabel() : 'Sign In';
+  authOpenBtn.textContent = signedIn ? getAuthLabel() : 'Account';
   authOpenBtn.classList.toggle('is-signed-in', signedIn);
   accountBtn.classList.toggle('account-signed-in', signedIn);
 
   authCopy.textContent = signedIn
     ? `${authUser.email} is signed in. ${syncMeta.label === 'Synced' ? 'Stacks sync automatically.' : 'Stack sync is still settling.'}`
-    : 'Sign in to sync your stacks across phone and laptop.';
+    : 'Sign in if you already have an account, or create one here to sync your stacks across phone and laptop.';
 
   authEmailInput.classList.toggle('hidden', signedIn);
   authPasswordInput.classList.toggle('hidden', signedIn);
