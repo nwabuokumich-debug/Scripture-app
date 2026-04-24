@@ -1,5 +1,27 @@
 # Scripture App — Codex Handoff Document
 
+## Current Status
+
+- Repo branch: `main`
+- Latest pushed repo work after the stack sync/auth rollout includes:
+  - added a proper stack switcher button that opens a full list of stacks instead of forcing horizontal stack browsing
+  - restyled stack card action controls (`Add`, `Note`, `Compare`) to use cleaner icon-and-label buttons
+  - added `San Francisco` as a reader font option using the Apple system font stack
+  - rebuilt the `Aa` reader settings UI into a richer mobile-oriented sheet with expandable font selection
+  - replaced the fixed 4-step font-size buttons with incremental size up/down controls
+  - changed the translation picker so tapping the same translation button again closes it instead of reopening it
+  - moved the reader settings panel onto the shared sheet/backdrop motion system used by the app’s other sheets
+  - further reduced how aggressively the reading chrome hides while scrolling
+- Current cache/version values in repo:
+  - `sw.js`: `const CACHE = 'scripture-v78'`
+  - `index.html`: `app.js?v=80`
+  - `index.html`: `style.css?v=81`
+- Recent pushed commits on `main`:
+  - `7db66aa` `Bump asset cache versions`
+  - `80cfd7a` `Refine stacks and reader controls`
+  - `5b4ed4e` `Polish mobile settings sheet motion`
+  - `a1fb9b0` `Use shared sheet motion for reader settings`
+
 ## Changes Made
 
 - Added a hard-press/long-press verse action mode in the Bible reader so verses can expose actions without cluttering the reader UI.
@@ -22,6 +44,13 @@
 - Added Supabase-backed stack sync via a new `user_stack_state` table, with local `study_stacks` kept as the on-device cache and migration source.
 - Added account sign-in/sign-up/sign-out UI so stacks can sync across phone and laptop under one Supabase Auth user.
 - Added stack import/export controls so users can back up current stacks to JSON and merge-import them later before or after sync rollout.
+- Added a stack switcher that opens a vertical popup list of all stacks instead of relying on a horizontal stack rail.
+- Restyled stack card action controls to use clearer icon-and-label buttons for add/note/compare.
+- Added `San Francisco` as a selectable reader font using the Apple system font stack.
+- Reworked the reader settings (`Aa`) UI into a richer mobile-oriented sheet with expandable font choices and incremental size controls.
+- Changed the translation picker so tapping the same translation trigger toggles it closed.
+- Switched reader settings to the app's shared sheet/backdrop motion system so its mobile animation matches the other sheets.
+- Tuned scroll-direction chrome hiding again so it feels less hair-trigger on mobile.
 - Bumped the app asset cache versions in `index.html` and `sw.js` to force updated JS/CSS to load after changes.
 - Created this handoff document to capture the current app state, setup notes, and known issues for Claude.
 
@@ -66,7 +95,7 @@ The anon key is fine to be public (it's a "publishable" key). The service key by
 - Git remote points to `https://github.com/nwabuokumich-debug/Scripture-app.git` and the current branch is `main`
 - `manifest.json` is configured for the path `/Scripture-app/` via `start_url` and `scope`
 - If the deployed path differs, update `manifest.json`
-- The service worker cache name is `scripture-v72` in `sw.js` — bump when deploying, and keep the `style.css?v=75` / `app.js?v=74` query strings in `index.html` aligned with the current build
+- The service worker cache name is `scripture-v78` in `sw.js` — bump when deploying, and keep the `style.css?v=81` / `app.js?v=80` query strings in `index.html` aligned with the current build
 
 ---
 
@@ -99,7 +128,7 @@ The anon key is fine to be public (it's a "publishable" key). The service key by
 - `stacks` JSONB NOT NULL DEFAULT `[]`
 - `updated_at` TIMESTAMPTZ NOT NULL
 - Protected by RLS so each authenticated user can only read/write their own stack state
-- Imported via `import-greek.js`
+- Created by `migration-add-user-stack-state.sql`
 
 ### Indexes
 ```sql
@@ -153,6 +182,8 @@ Note: `import-translations.js` and `import-web-dra.js` overlap on WEB/DRA — th
 ├── icon.svg                # App icon
 ├── schema.sql              # Initial DB setup
 ├── migration-add-translation.sql  # Adds translation column
+├── migration-add-user-stack-state.sql  # Adds synced user stack table + RLS policies
+├── stack-admin.js          # Service-role stack admin/debug CLI
 ├── import*.js              # Data import scripts (Node.js, not browser)
 ├── clear*.js               # Data deletion scripts
 └── package.json            # Node deps for import scripts only
@@ -190,7 +221,7 @@ Note: `import-translations.js` and `import-web-dra.js` overlap on WEB/DRA — th
 - Import accepts exported JSON and merges it into current stacks by `id`, with newer `updatedAt` winning
 
 ### Service Worker
-- Cache name must be bumped manually in `sw.js` to force cache invalidation (`scripture-v71` at the moment)
+- Cache name must be bumped manually in `sw.js` to force cache invalidation (`scripture-v78` at the moment)
 - Network-first strategy: always tries fresh, falls back to cache
 
 ---
@@ -209,10 +240,10 @@ HNV, ERV, and WNT are not in the current `TRANSLATIONS` list in `app.js`, and `a
 However, `import-translations.js` still contains import logic for HNV, ERV, and WNT, so the repo does **not** prove why those translations were removed from the UI or whether their upstream source data was unusable.
 
 ### 4. Cache version must be bumped manually
-`sw.js` line 1: `const CACHE = 'scripture-v73'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
+`sw.js` line 1: `const CACHE = 'scripture-v78'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
 
 ### 5. Browser cache-busting query strings
-`index.html` loads `app.js?v=75` and `style.css?v=76` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
+`index.html` loads `app.js?v=80` and `style.css?v=81` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
 
 ### 6. PWA path is hardcoded
 `manifest.json` has `"start_url": "/Scripture-app/"` and `"scope": "/Scripture-app/"`. If the app ever moves to a different URL path, both values must be updated or the PWA install will break.
@@ -226,7 +257,7 @@ This is vanilla JS — no bundler, no TypeScript. `app.js` uses ES modules (`imp
 
 1. **Read app.js top-to-bottom once** — all logic is in one file. State is at the top, DOM refs below that, then functions. There's no framework.
 
-2. **Translation picker** is a slide-up sheet triggered by clicking the "KJV" label in the sidebar header. The animation uses CSS transitions + a small JS toggle.
+2. **Translation picker** is a slide-up sheet triggered by clicking the translation label in the header. Tapping the same trigger again closes it.
 
    The books sheet now dismisses via `Cancel`, backdrop tap, or drag-down. Its snap logic is midpoint-based, not velocity-based.
 
@@ -249,4 +280,9 @@ This is vanilla JS — no bundler, no TypeScript. `app.js` uses ES modules (`imp
    - `active_translation` — last used translation slug
    - `reader_settings` — single JSON blob with all reader prefs (theme, font, size, spacing)
 
-10. **Reader settings panel** is moved to `document.body` at runtime in `app.js` so it stays above its transparent backdrop and remains tappable on iPhone.
+10. **Reader settings (`Aa`)** now use the shared sheet/backdrop motion system like the rest of the app. The panel includes:
+   - incremental font size up/down controls instead of only 4 fixed size buttons
+   - expandable font selection, including `San Francisco`
+   - theme and spacing controls tuned for mobile
+
+11. **Stacks UI** no longer expects the user to browse a horizontal stack rail. The current stack is shown in a single switcher control that opens a full vertical list of stacks.
