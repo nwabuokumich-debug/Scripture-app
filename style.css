@@ -1015,7 +1015,7 @@ body::before {
 }
 .stack-switcher-backdrop .stack-picker-list {
   width: min(380px, calc(100vw - 24px));
-  max-height: min(62vh, 520px);
+  max-height: min(82vh, 700px);
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;

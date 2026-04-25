@@ -2843,7 +2843,7 @@ function openStackSwitcher() {
   picker?.addEventListener('click', e => e.stopPropagation());
   backdrop.addEventListener('click', closeStackPicker);
 
-  requestAnimationFrame(() => backdrop.classList.add('open'));
+  requestAnimationFrame(() => { backdrop.classList.add('open'); picker.scrollTop = 0; });
 
   backdrop.querySelectorAll('.stack-picker-stack-item').forEach(item => {
     item.addEventListener('click', e => {
