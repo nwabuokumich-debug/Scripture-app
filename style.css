@@ -418,12 +418,27 @@ body::before {
 
 .verse-row.selected {
   background: rgba(231,66,82,0.08) !important;
-  border-color: rgba(231,66,82,0.12);
+  border-color: transparent;
+  border-radius: 4px;
+}
+.verse-row.selected-start {
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+}
+.verse-row.selected-end {
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+.verse-row.selected-start.selected-end {
+  border-radius: 16px;
+}
+.verse-row.selected + .verse-row.selected {
+  margin-top: -7px;
 }
 .verse-row.action-active {
   background: rgba(231,66,82,0.1) !important;
-  border-color: rgba(231,66,82,0.18);
-  box-shadow: inset 3px 0 0 rgba(231,66,82,0.7);
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 rgba(231,66,82,0.65);
 }
 
 .verse-focus {
@@ -2237,7 +2252,7 @@ body.theme-dark .verse-row.action-active {
 }
 body.theme-dark .verse-row.selected {
   background: rgba(231,66,82,0.08) !important;
-  border-color: rgba(231,66,82,0.12);
+  border-color: transparent;
 }
 body.theme-dark .add-passage-btn,
 body.theme-dark .note-toggle,

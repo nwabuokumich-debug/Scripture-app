@@ -2769,7 +2769,21 @@ function showToast(msg) {
 
 // ── Multi-select ──────────────────────────────────────
 function syncBibleActionRows() {
-  verseArea.querySelectorAll('.verse-row.action-active').forEach(row => row.classList.remove('action-active'));
+  verseArea.querySelectorAll('.verse-row.action-active, .verse-row.selected-start, .verse-row.selected-middle, .verse-row.selected-end').forEach(row => {
+    row.classList.remove('action-active', 'selected-start', 'selected-middle', 'selected-end');
+  });
+  const selectedRows = Array.from(verseArea.querySelectorAll('.verse-row.selected'))
+    .sort((a, b) => Number(a.dataset.vnum) - Number(b.dataset.vnum));
+  selectedRows.forEach((row, idx) => {
+    const prev = selectedRows[idx - 1];
+    const next = selectedRows[idx + 1];
+    const vnum = Number(row.dataset.vnum);
+    const hasPrev = prev && Number(prev.dataset.vnum) === vnum - 1;
+    const hasNext = next && Number(next.dataset.vnum) === vnum + 1;
+    if (!hasPrev) row.classList.add('selected-start');
+    if (hasPrev && hasNext) row.classList.add('selected-middle');
+    if (!hasNext) row.classList.add('selected-end');
+  });
   if (!verseActionMode || activeActionVerseNum == null) return;
   verseArea.querySelector(`.verse-row[data-vnum="${activeActionVerseNum}"]`)?.classList.add('action-active');
 }
@@ -2810,6 +2824,7 @@ function toggleVerseSelection(verseData, rowEl, btn) {
     rowEl?.classList.remove('selected');
     if (btn) btn.textContent = '+';
   }
+  syncBibleActionRows();
   updateSelectionBar();
 }
 
