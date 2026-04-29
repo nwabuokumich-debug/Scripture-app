@@ -1539,8 +1539,20 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   border-radius: 22px;
   background: rgba(246,244,243,0.72);
   margin-bottom: 10px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
 }
 .compare-row:last-child { margin-bottom: 0; }
+.compare-row *,
+.compare-passage-verse,
+.compare-passage-verse * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
+  -webkit-user-drag: none;
+}
 .compare-label {
   font-family: var(--font-ui);
   font-size: 0.72rem; font-weight: 800;
@@ -1575,6 +1587,10 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
 .compare-passage-verse {
   display: grid; grid-template-columns: auto 1fr;
   gap: 10px; align-items: start;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
 }
 .compare-passage-marker {
   font-family: var(--font-ui);
