@@ -57,32 +57,31 @@ body::before {
 
 /* ── Pane ─────────────────────────────────── */
 .pane {
-  display: flex; flex-direction: column;
   position: fixed; inset: 0;
   background: var(--bg);
-  padding-bottom: var(--nav-h);
+  --pane-top-bar-h: 78px;
+  --pane-top-chrome-h: 136px;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   transform: translateY(18px);
-  transition: opacity 0.28s ease, transform 0.34s cubic-bezier(0.32, 0.72, 0.18, 1), visibility 0.28s, padding-bottom 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.28s ease, transform 0.34s cubic-bezier(0.32, 0.72, 0.18, 1), visibility 0.28s;
   overflow: hidden;
 }
+#stacks-pane { --pane-top-chrome-h: 104px; }
 .pane.is-active {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: translateY(0);
 }
-.pane.chrome-collapsed { padding-bottom: 0; }
 
 /* ── Top bar ──────────────────────────────── */
 .top-bar {
   display: flex; flex-direction: column; gap: 12px;
   padding: max(14px, env(safe-area-inset-top)) 16px 12px;
   background: var(--bg);
-  flex-shrink: 0;
-  position: relative; z-index: 10;
+  position: absolute; top: 0; left: 0; right: 0; z-index: 40;
   max-height: 160px;
   overflow: hidden;
   opacity: 1;
@@ -285,7 +284,9 @@ body::before {
 .chapter-bar {
   display: flex; align-items: center; gap: 6px;
   padding: 0 16px 14px;
-  overflow-x: auto; flex-wrap: nowrap; flex-shrink: 0;
+  position: absolute; top: var(--pane-top-bar-h); left: 0; right: 0; z-index: 35;
+  overflow-x: auto; flex-wrap: nowrap;
+  background: var(--bg);
   -webkit-overflow-scrolling: touch;
   max-height: 68px;
   opacity: 1;
@@ -320,7 +321,12 @@ body::before {
 
 /* ── Content area ─────────────────────────── */
 .content-area {
-  flex: 1; overflow-y: auto; overflow-x: hidden;
+  position: absolute; inset: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding-top: var(--pane-top-chrome-h);
+  padding-bottom: var(--nav-h);
+  scroll-padding-top: var(--pane-top-chrome-h);
+  scroll-padding-bottom: var(--nav-h);
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
 }
@@ -459,20 +465,14 @@ body::before {
 .nav-item.active .nav-label { font-weight: 800; }
 
 .pane.chrome-collapsed .top-bar {
-  max-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
   opacity: 0;
-  transform: translateY(-18px);
+  transform: translateY(calc(-100% - env(safe-area-inset-top) - 8px));
   pointer-events: none;
 }
 
 .pane.chrome-collapsed .chapter-bar {
-  max-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
   opacity: 0;
-  transform: translateY(-12px);
+  transform: translateY(calc(-1 * var(--pane-top-chrome-h)));
   pointer-events: none;
 }
 

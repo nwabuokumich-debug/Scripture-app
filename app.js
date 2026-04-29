@@ -130,6 +130,35 @@ function syncBottomNavChrome() {
   bottomNav.classList.toggle('chrome-collapsed', collapsed);
 }
 
+function measurePaneChrome(pane) {
+  const topBar = pane.querySelector('.top-bar');
+  const chapterRail = pane.querySelector('.chapter-bar');
+  const topBarHeight = topBar?.offsetHeight ?? 0;
+  const chromeHeight = topBarHeight + (chapterRail?.offsetHeight ?? 0);
+  pane.style.setProperty('--pane-top-bar-h', `${topBarHeight}px`);
+  pane.style.setProperty('--pane-top-chrome-h', `${chromeHeight}px`);
+}
+
+function measureAllPaneChrome() {
+  measurePaneChrome(biblePane);
+  measurePaneChrome(stacksPane);
+}
+
+function schedulePaneChromeMeasure() {
+  requestAnimationFrame(measureAllPaneChrome);
+}
+
+if (typeof ResizeObserver !== 'undefined') {
+  const chromeObserver = new ResizeObserver(schedulePaneChromeMeasure);
+  [biblePane, stacksPane].forEach(pane => {
+    const topBar = pane.querySelector('.top-bar');
+    const chapterRail = pane.querySelector('.chapter-bar');
+    if (topBar) chromeObserver.observe(topBar);
+    if (chapterRail) chromeObserver.observe(chapterRail);
+  });
+}
+window.addEventListener('resize', schedulePaneChromeMeasure, { passive: true });
+
 function setPaneChromeCollapsed(pane, collapsed) {
   pane.classList.toggle('chrome-collapsed', collapsed);
   if ((pane === biblePane && appMode === 'bible') || (pane === stacksPane && appMode === 'stacks')) {
@@ -786,6 +815,7 @@ function renderChapterBar(total) {
     btn.addEventListener('click', () => selectChapter(i));
     chapterBar.appendChild(btn);
   }
+  schedulePaneChromeMeasure();
 }
 
 // ── Select chapter ────────────────────────────────────
@@ -3084,6 +3114,7 @@ document.querySelectorAll('.sp-spacing-btn').forEach(btn => {
 
 // ── Apply on boot ─────────────────────────────────────
 applySettings(loadSettings());
+measureAllPaneChrome();
 bindPaneChromeScroll(bibleContent, biblePane, { minScrollTop: 168, hideDistance: 128, showDistance: 56, toggleCooldownMs: 420 });
 bindPaneChromeScroll(stacksContent, stacksPane, { minScrollTop: 148, hideDistance: 120, showDistance: 56, toggleCooldownMs: 420 });
 resetChromeScroll(bibleContent, biblePane);
