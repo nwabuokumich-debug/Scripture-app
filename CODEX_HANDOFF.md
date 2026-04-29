@@ -4,34 +4,49 @@
 
 - Repo branch: `main`
 - Latest pushed repo work after the stack sync/auth rollout includes:
-  - added a proper stack switcher button that opens a full list of stacks instead of forcing horizontal stack browsing
-  - restyled stack card action controls (`Add`, `Note`, `Compare`) to use cleaner icon-and-label buttons
-  - added `San Francisco` as a reader font option using the Apple system font stack
-  - rebuilt the `Aa` reader settings UI into a richer mobile-oriented sheet with expandable font selection
-  - replaced the fixed 4-step font-size buttons with incremental size up/down controls
-  - changed the translation picker so tapping the same translation button again closes it instead of reopening it
-  - moved the reader settings panel onto the shared sheet/backdrop motion system used by the app’s other sheets
-  - further reduced how aggressively the reading chrome hides while scrolling
+  - converted Bible reading back to one grouped chapter card instead of separate cards per verse
+  - tightened grouped verse spacing and made adjacent selected verses merge into one clean highlight block
+  - softened the verse selection highlight so it no longer appears as a chunky red block
+  - fixed dark-mode reader card contrast after the grouped-card change
+  - disabled native iOS text selection/callout inside the compare sheet
+  - preserved Bible and Stacks scroll positions when the app resumes after phone sleep/lock
+  - fixed mobile chrome hide/show scroll jumps by keeping pane scroll geometry stable
+  - restyled the mobile UI, bottom nav, reader cards, stack cards, compare sheet, and action controls
+  - kept the stack switcher as a full vertical list instead of horizontal stack browsing
+  - kept the richer `Aa` reader settings sheet with incremental font controls and `San Francisco`
 - Current cache/version values in repo:
-  - `sw.js`: `const CACHE = 'scripture-v78'`
-  - `index.html`: `app.js?v=80`
-  - `index.html`: `style.css?v=81`
+  - `sw.js`: `const CACHE = 'scripture-v87'`
+  - `index.html`: `app.js?v=84`
+  - `index.html`: `style.css?v=89`
 - Recent pushed commits on `main`:
-  - `7db66aa` `Bump asset cache versions`
-  - `80cfd7a` `Refine stacks and reader controls`
-  - `5b4ed4e` `Polish mobile settings sheet motion`
-  - `a1fb9b0` `Use shared sheet motion for reader settings`
+  - `7bc224e` `Merge adjacent selected verse highlights`
+  - `5dff138` `Soften verse selection highlight`
+  - `a4486cc` `Tighten grouped verse spacing`
+  - `386bfbf` `Disable native selection in compare sheet`
+  - `62095a0` `Fix dark reader card contrast`
+  - `d7c19e7` `Group Bible verses in one reader card`
+  - `d808950` `Preserve scroll on app resume`
+  - `9cf172a` `Refine mobile Bible UI`
+  - `c84d0cd` `Fix mobile chrome scroll jumps`
+  - `8e1ff86` `Fix stack switcher clipping top stacks on mobile`
 
 ## Changes Made
 
 - Added a hard-press/long-press verse action mode in the Bible reader so verses can expose actions without cluttering the reader UI.
 - Disabled native iOS text selection/callout on verse rows so the custom hard-press action mode is not overridden by the system copy/lookup UI.
+- Disabled native iOS text selection/callout inside compare sheet rows so `Copy / Look Up / Translate` does not appear over compare text.
 - Added compare support for multiple selected verses, grouped by translation, in the compare sheet.
 - Added stack compare mode on cards via a dedicated Compare button, removed the old compare button from stack passage rows, and matched the new button styling to the other card actions.
+- Converted the Bible reader to one grouped `.scripture-card` per chapter, with individual `.verse-row` elements inside it. Do not reintroduce per-verse cards unless explicitly requested.
+- Tightened grouped verse spacing by reducing row padding and using slight negative row margins.
+- Added selection grouping classes (`selected-start`, `selected-middle`, `selected-end`) so adjacent selected verses render as one continuous highlight instead of overlapping rounded rectangles.
+- Softened Bible verse selection styling to a translucent accent fill with a slim left accent edge on the active verse.
+- Fixed dark-mode contrast for the grouped reader card after the grouped-card change.
 - Tightened stacked verse row spacing so passages inside a stack visually match the normal reading layout more closely.
 - Fixed the stack compare bar so it dismisses before the compare sheet opens and clears compare state when the sheet closes.
 - Restored the reader verse layout after the long-press changes so the main reading experience stays usable.
 - Preserved stack scroll position when reordering items so the list does not jump after drag/reorder actions.
+- Preserved Bible and Stacks scroll positions across phone sleep/app resume with per-pane scroll restore logic.
 - Fixed the red verse highlight appearing on tap during scroll by scoping hover styles to hover-capable devices and clearing verse action mode when the user scrolls.
 - Removed the `Done` action from the books sheet header and left `Cancel`, backdrop tap, and drag dismissal as the close paths.
 - Reworked the books sheet drag interaction so it snaps by midpoint: more than 50% open returns to the top, 50% or less open snaps down to dismiss.
@@ -39,6 +54,8 @@
 - Fixed the reader settings panel becoming untappable on mobile by rendering it above its backdrop at the document root.
 - Added scroll-direction-based chrome hiding for both Bible reading and Stacks: downward reading scroll collapses the top controls and bottom nav, upward scroll reveals them again.
 - Softened the hide-on-read behavior so the chrome waits for a longer scroll and eases out more gradually instead of disappearing too quickly.
+- Fixed chrome hide/show scroll jumps by making top/bottom chrome overlay the panes while keeping stable scroll padding/geometry.
+- Added measured pane chrome heights with `ResizeObserver` so the scroll content reserves the correct top space without changing on hide/show.
 - Tightened verse spacing in both the Bible reader and stack cards by reducing per-verse vertical padding and row gaps.
 - Tightened verse spacing again in both the Bible reader and stack cards so adjacent verses sit even closer together.
 - Added Supabase-backed stack sync via a new `user_stack_state` table, with local `study_stacks` kept as the on-device cache and migration source.
@@ -95,7 +112,7 @@ The anon key is fine to be public (it's a "publishable" key). The service key by
 - Git remote points to `https://github.com/nwabuokumich-debug/Scripture-app.git` and the current branch is `main`
 - `manifest.json` is configured for the path `/Scripture-app/` via `start_url` and `scope`
 - If the deployed path differs, update `manifest.json`
-- The service worker cache name is `scripture-v78` in `sw.js` — bump when deploying, and keep the `style.css?v=81` / `app.js?v=80` query strings in `index.html` aligned with the current build
+- The service worker cache name is `scripture-v87` in `sw.js` — bump when deploying, and keep the `style.css?v=89` / `app.js?v=84` query strings in `index.html` aligned with the current build
 
 ---
 
@@ -221,7 +238,7 @@ Note: `import-translations.js` and `import-web-dra.js` overlap on WEB/DRA — th
 - Import accepts exported JSON and merges it into current stacks by `id`, with newer `updatedAt` winning
 
 ### Service Worker
-- Cache name must be bumped manually in `sw.js` to force cache invalidation (`scripture-v78` at the moment)
+- Cache name must be bumped manually in `sw.js` to force cache invalidation (`scripture-v87` at the moment)
 - Network-first strategy: always tries fresh, falls back to cache
 
 ---
@@ -240,10 +257,10 @@ HNV, ERV, and WNT are not in the current `TRANSLATIONS` list in `app.js`, and `a
 However, `import-translations.js` still contains import logic for HNV, ERV, and WNT, so the repo does **not** prove why those translations were removed from the UI or whether their upstream source data was unusable.
 
 ### 4. Cache version must be bumped manually
-`sw.js` line 1: `const CACHE = 'scripture-v78'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
+`sw.js` line 1: `const CACHE = 'scripture-v87'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
 
 ### 5. Browser cache-busting query strings
-`index.html` loads `app.js?v=80` and `style.css?v=81` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
+`index.html` loads `app.js?v=84` and `style.css?v=89` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
 
 ### 6. PWA path is hardcoded
 `manifest.json` has `"start_url": "/Scripture-app/"` and `"scope": "/Scripture-app/"`. If the app ever moves to a different URL path, both values must be updated or the PWA install will break.
@@ -266,6 +283,7 @@ This is vanilla JS — no bundler, no TypeScript. `app.js` uses ES modules (`imp
 3. **Greek analysis** opens as a full-screen overlay (`#greek-page`). It's only available for NT books when Greek data exists.
 
 4. **Compare translations** is a bottom sheet modal (`#compare-backdrop`). It fetches all translations for a single verse in parallel and also groups selected verses by translation for multi-verse compare.
+   Native iOS text selection is intentionally disabled in the compare sheet to prevent the system `Copy / Look Up / Translate` overlay from covering the UI.
 
 5. **Stack compare mode** is entered by tapping the Compare button on a stack card. Only one stack card can be active at a time, and `Compare` uses the whole block unless specific passages inside that card have been selected.
 
@@ -286,3 +304,7 @@ This is vanilla JS — no bundler, no TypeScript. `app.js` uses ES modules (`imp
    - theme and spacing controls tuned for mobile
 
 11. **Stacks UI** no longer expects the user to browse a horizontal stack rail. The current stack is shown in a single switcher control that opens a full vertical list of stacks.
+
+12. **Bible reader layout** uses one grouped `.scripture-card` for the chapter, with `.verse-row` children inside it. Selection styling depends on JS adding `selected-start`, `selected-middle`, and `selected-end` classes to adjacent selected rows. If changing selection UI, preserve this grouping behavior to avoid ugly overlapping rounded highlights.
+
+13. **Scroll resume** preserves `bibleContent.scrollTop` and `stacksContent.scrollTop` when the app is hidden/visible after phone sleep or lock. Avoid calling `renderStackView(..., { resetScroll: true })` on resume unless the user explicitly opened a different stack.
