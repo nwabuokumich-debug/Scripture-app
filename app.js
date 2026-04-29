@@ -944,6 +944,9 @@ function closeCompare() {
   compareBackdrop.classList.remove('open');
   setTimeout(() => compareBackdrop.classList.add('hidden'), 380);
   if (stackCompareMode) clearStackCompareMode();
+  else dismissStackCompareBar();
+  if (verseActionMode) clearSelection();
+  else dismissSelectionBar();
 }
 document.getElementById('compare-close').addEventListener('click', closeCompare);
 compareBackdrop.addEventListener('click', e => { if (e.target === compareBackdrop) closeCompare(); });
@@ -1101,8 +1104,11 @@ function syncStackCompareRows() {
 function dismissStackCompareBar() {
   const bar = document.getElementById('stack-selection-bar');
   if (!bar) return;
+  bar.dataset.dismissed = 'true';
   bar.classList.remove('open');
-  setTimeout(() => bar.remove(), 400);
+  setTimeout(() => {
+    if (bar.dataset.dismissed === 'true') bar.remove();
+  }, 400);
 }
 
 function clearStackCompareMode() {
@@ -1169,6 +1175,7 @@ function updateStackCompareBar() {
     requestAnimationFrame(() => bar.classList.add('open'));
   }
 
+  bar.dataset.dismissed = 'false';
   bar.className = 'selection-bar stack-compare-bar open';
   bar.innerHTML = `
     <div class="sel-head">
@@ -2672,6 +2679,7 @@ function updateSelectionBar() {
     document.body.appendChild(bar);
     requestAnimationFrame(() => bar.classList.add('open'));
   }
+  bar.dataset.dismissed = 'false';
 
   if (verseActionMode && appMode === 'bible') {
     const activeVerse = getActiveBibleVerseData();
@@ -2730,8 +2738,11 @@ function updateSelectionBar() {
 function dismissSelectionBar() {
   const bar = document.getElementById('selection-bar');
   if (!bar) return;
+  bar.dataset.dismissed = 'true';
   bar.classList.remove('open');
-  setTimeout(() => bar.remove(), 400);
+  setTimeout(() => {
+    if (bar.dataset.dismissed === 'true') bar.remove();
+  }, 400);
 }
 
 function clearSelection() {
