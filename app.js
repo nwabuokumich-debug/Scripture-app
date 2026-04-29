@@ -74,6 +74,7 @@ let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 'UKJV', mkjv: 'MKJV', litv: 'LITV', cpdv: 'CPDV', darby: 'Darby', webster: 'Webster', dra: 'DRA', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
 const chromeScrollState = new WeakMap();
 const STACKS_STORAGE_KEY = 'study_stacks';
+const SCROLL_STATE_STORAGE_KEY = 'scripture_scroll_state';
 const STACKS_SYNC_DEBOUNCE_MS = 500;
 let stacksCache      = [];
 let authSession      = null;
@@ -82,6 +83,8 @@ let stackSyncState   = 'local';
 let stackSyncTimer   = null;
 let stackSyncPromise = null;
 let stackSyncWarned  = false;
+let lastScrollState  = null;
+let scrollStateSaveTimer = null;
 // Migrate away from removed translations
 if (!TRANSLATIONS[activeTranslation]) { activeTranslation = 'kjv'; localStorage.setItem('active_translation', 'kjv'); }
 if (!['traditional', 'alphabetical'].includes(bookOrderMode)) bookOrderMode = 'traditional';
@@ -174,6 +177,18 @@ function showActivePaneChrome() {
   showPaneChrome(appMode === 'stacks' ? stacksPane : biblePane);
 }
 
+bibleContent.addEventListener('scroll', captureScrollState, { passive: true });
+stacksContent.addEventListener('scroll', captureScrollState, { passive: true });
+window.addEventListener('pagehide', () => captureScrollState({ immediate: true }));
+window.addEventListener('pageshow', () => restoreSavedScrollState());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    captureScrollState({ immediate: true });
+  } else {
+    restoreSavedScrollState();
+  }
+});
+
 function resetChromeScroll(container, pane) {
   const state = chromeScrollState.get(container);
   if (state) {
@@ -182,6 +197,75 @@ function resetChromeScroll(container, pane) {
     state.distance = 0;
   }
   showPaneChrome(pane);
+}
+
+function readSavedScrollState() {
+  if (lastScrollState) return lastScrollState;
+  try {
+    return JSON.parse(localStorage.getItem(SCROLL_STATE_STORAGE_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function writeSavedScrollState(state) {
+  localStorage.setItem(SCROLL_STATE_STORAGE_KEY, JSON.stringify(state));
+}
+
+function captureScrollState({ immediate = false } = {}) {
+  const state = {
+    mode: appMode,
+    bible: {
+      top: bibleContent.scrollTop,
+      bookId: activeBook?.id ?? null,
+      chapter: activeChapter,
+      translation: activeTranslation
+    },
+    stacks: {
+      top: stacksContent.scrollTop,
+      activeStackId
+    },
+    savedAt: Date.now()
+  };
+  lastScrollState = state;
+  if (immediate) {
+    clearTimeout(scrollStateSaveTimer);
+    scrollStateSaveTimer = null;
+    writeSavedScrollState(state);
+  } else if (!scrollStateSaveTimer) {
+    scrollStateSaveTimer = setTimeout(() => {
+      scrollStateSaveTimer = null;
+      if (lastScrollState) writeSavedScrollState(lastScrollState);
+    }, 250);
+  }
+  return state;
+}
+
+function restoreScrollTop(container, top) {
+  const nextTop = Math.max(0, Number(top) || 0);
+  requestAnimationFrame(() => {
+    container.scrollTop = nextTop;
+    requestAnimationFrame(() => {
+      container.scrollTop = nextTop;
+    });
+  });
+}
+
+function restoreSavedScrollState(saved = readSavedScrollState()) {
+  if (!saved) return;
+
+  if (appMode === 'stacks') {
+    if (!saved.stacks || saved.stacks.activeStackId !== activeStackId) return;
+    restoreScrollTop(stacksContent, saved.stacks.top);
+    return;
+  }
+
+  if (!saved.bible) return;
+  const sameBibleView =
+    saved.bible.bookId === (activeBook?.id ?? null) &&
+    saved.bible.chapter === activeChapter &&
+    saved.bible.translation === activeTranslation;
+  if (sameBibleView) restoreScrollTop(bibleContent, saved.bible.top);
 }
 
 function bindPaneChromeScroll(
@@ -705,6 +789,52 @@ async function initAuth() {
   });
 }
 
+async function restoreInitialView() {
+  const saved = readSavedScrollState();
+  if (!saved) return false;
+
+  if (saved.mode === 'stacks') {
+    const stacks = loadStacks();
+    if (!stacks.length) return false;
+    const target = stacks.find(stack => stack.id === saved.stacks?.activeStackId)?.id || stacks[0].id;
+    appMode = 'stacks';
+    activeStackId = target;
+    updateNavState();
+    renderStacksSummary();
+    renderStacksList();
+    renderStackView(target, { preserveScroll: true });
+    restoreSavedScrollState(saved);
+    return true;
+  }
+
+  if (saved.mode === 'bible' && saved.bible?.bookId && saved.bible?.chapter) {
+    const book = allBooks.find(entry => entry.id === saved.bible.bookId);
+    if (!book) return false;
+    appMode = 'bible';
+    activeTestament = book.testament;
+    activeBook = book;
+    activeChapter = null;
+    updateNavState();
+    updateBibleChrome();
+    renderBookList();
+
+    const { data } = await supabase
+      .from('verses')
+      .select('chapter')
+      .eq('book_id', book.id)
+      .eq('translation', activeTranslation)
+      .order('chapter', { ascending: false })
+      .limit(1);
+
+    renderChapterBar(data?.[0]?.chapter ?? 1);
+    await selectChapter(saved.bible.chapter);
+    restoreSavedScrollState(saved);
+    return true;
+  }
+
+  return false;
+}
+
 async function init() {
   const { data, error } = await supabase
     .from('books')
@@ -727,7 +857,8 @@ async function init() {
   renderStacksList();
   updateNavState();
   updateSearchEmptyState();
-  showWelcome();
+  const restored = await restoreInitialView();
+  if (!restored) showWelcome();
 }
 
 // ── Migrate old single-blob passages into individual verses ──
@@ -1831,7 +1962,7 @@ async function hydrateStacksFromCloud() {
   if (!authUser) {
     stacksCache = localStacks;
     setStackSyncState('local');
-    refreshStacksUi();
+    refreshStacksUi({ preserveView: true });
     return;
   }
 
@@ -1846,7 +1977,7 @@ async function hydrateStacksFromCloud() {
     console.error('Failed to load cloud stacks', error);
     stacksCache = localStacks;
     setStackSyncState('error');
-    refreshStacksUi();
+    refreshStacksUi({ preserveView: true });
     return;
   }
 
@@ -1856,7 +1987,7 @@ async function hydrateStacksFromCloud() {
 
   saveStacks(nextStacks, { remote: false });
   setStackSyncState('synced');
-  refreshStacksUi();
+  refreshStacksUi({ preserveView: true });
 
   if (shouldPushMergedCopy) await flushStackSync();
 }
@@ -1915,6 +2046,10 @@ async function handleSignOut() {
 
 // ── Mode toggle ───────────────────────────────────────
 function setMode(mode) {
+  const alreadyActive = appMode === mode;
+  const persisted = readSavedScrollState();
+  const currentState = captureScrollState({ immediate: true });
+  const saved = (alreadyActive && persisted) ? persisted : currentState;
   appMode = mode;
   closeBookSheet();
   closeSearchSheet();
@@ -1922,15 +2057,22 @@ function setMode(mode) {
   updateNavState();
   syncBottomNavChrome();
 
+  if (alreadyActive) {
+    showActivePaneChrome();
+    restoreSavedScrollState(saved);
+    return;
+  }
+
   if (mode === 'stacks') {
-    resetChromeScroll(stacksContent, stacksPane);
     clearSelection();
-    renderStacksSummary();
-    renderStacksList();
     const stacks = loadStacks();
     if (stacks.length > 0) {
       const target = stacks.find(s => s.id === activeStackId) ? activeStackId : stacks[0].id;
-      openStack(target);
+      activeStackId = target;
+      renderStacksSummary();
+      renderStacksList();
+      renderStackView(target, { preserveScroll: true });
+      restoreSavedScrollState(saved);
     } else {
       activeStackId = null;
       showStacksWelcome();
@@ -1938,16 +2080,18 @@ function setMode(mode) {
     return;
   }
 
-  resetChromeScroll(bibleContent, biblePane);
   clearStackCompareMode();
   updateBibleChrome();
   renderBookList();
   if (!activeBook || !activeChapter) {
     showWelcome();
+  } else {
+    restoreSavedScrollState(saved);
   }
 }
 
 function refreshStacksUi({ preserveView = false } = {}) {
+  const saved = preserveView ? readSavedScrollState() : null;
   const stacks = loadStacks();
   renderStacksSummary();
   renderStacksList();
@@ -1960,12 +2104,18 @@ function refreshStacksUi({ preserveView = false } = {}) {
     return;
   }
 
-  const target = stacks.find(s => s.id === activeStackId)?.id || stacks[0].id;
+  const savedStackId = preserveView ? saved?.stacks?.activeStackId : null;
+  const target =
+    stacks.find(s => s.id === activeStackId)?.id ||
+    stacks.find(s => s.id === savedStackId)?.id ||
+    stacks[0].id;
   if (preserveView && target === activeStackId) {
     renderStackView(target, { preserveScroll: true });
+    restoreSavedScrollState(saved);
     return;
   }
   openStack(target);
+  if (preserveView) restoreSavedScrollState(saved);
 }
 
 navBible.addEventListener('click', () => setMode('bible'));
