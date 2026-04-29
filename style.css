@@ -2198,11 +2198,18 @@ body.theme-dark .remove-verse-btn {
   background: rgba(28,28,34,0.9);
   border-color: rgba(255,255,255,0.08);
 }
-body.theme-dark .verse-row,
+body.theme-dark .scripture-card {
+  background: rgba(20,20,24,0.98);
+  border-color: rgba(255,255,255,0.08);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.28), 0 12px 34px rgba(0,0,0,0.22);
+}
 body.theme-dark .stack-verse-card {
   border-color: rgba(255,255,255,0.08);
 }
-body.theme-dark .verse-row { background: transparent; }
+body.theme-dark .verse-row {
+  background: transparent;
+  border-color: transparent;
+}
 body.theme-dark .stack-verse-card { background: rgba(20,20,24,0.98); }
 body.theme-dark .stack-verse-card.action-active,
 body.theme-dark .verse-row.action-active {
