@@ -417,28 +417,28 @@ body::before {
 }
 
 .verse-row.selected {
-  background: rgba(231,66,82,0.08) !important;
+  background: rgba(231,66,82,0.10) !important;
   border-color: transparent;
-  border-radius: 4px;
+  border-radius: 0;
+  box-shadow: inset 2px 0 0 rgba(231,66,82,0.45);
 }
 .verse-row.selected-start {
-  border-top-left-radius: 16px;
-  border-top-right-radius: 16px;
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+  padding-top: 6px;
 }
 .verse-row.selected-end {
-  border-bottom-left-radius: 16px;
-  border-bottom-right-radius: 16px;
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+  padding-bottom: 6px;
 }
 .verse-row.selected-start.selected-end {
-  border-radius: 16px;
-}
-.verse-row.selected + .verse-row.selected {
-  margin-top: -7px;
+  border-radius: 14px;
 }
 .verse-row.action-active {
-  background: rgba(231,66,82,0.1) !important;
+  background: rgba(231,66,82,0.13) !important;
   border-color: transparent;
-  box-shadow: inset 3px 0 0 rgba(231,66,82,0.65);
+  box-shadow: inset 2px 0 0 rgba(231,66,82,0.7);
 }
 
 .verse-focus {
@@ -2247,12 +2247,14 @@ body.theme-dark .verse-row {
 body.theme-dark .stack-verse-card { background: rgba(20,20,24,0.98); }
 body.theme-dark .stack-verse-card.action-active,
 body.theme-dark .verse-row.action-active {
-  background: rgba(231,66,82,0.11) !important;
-  border-color: rgba(231,66,82,0.16);
+  background: rgba(231,66,82,0.16) !important;
+  border-color: transparent;
+  box-shadow: inset 2px 0 0 rgba(231,66,82,0.75);
 }
 body.theme-dark .verse-row.selected {
-  background: rgba(231,66,82,0.08) !important;
+  background: rgba(231,66,82,0.11) !important;
   border-color: transparent;
+  box-shadow: inset 2px 0 0 rgba(231,66,82,0.5);
 }
 body.theme-dark .add-passage-btn,
 body.theme-dark .note-toggle,
