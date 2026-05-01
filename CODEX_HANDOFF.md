@@ -3,85 +3,97 @@
 ## Current Status
 
 - Repo branch: `main`
-- Latest pushed repo work after the stack sync/auth rollout includes:
-  - converted Bible reading back to one grouped chapter card instead of separate cards per verse
-  - tightened grouped verse spacing and made adjacent selected verses merge into one clean highlight block
-  - softened the verse selection highlight so it no longer appears as a chunky red block
-  - fixed dark-mode reader card contrast after the grouped-card change
-  - disabled native iOS text selection/callout inside the compare sheet
-  - preserved Bible and Stacks scroll positions when the app resumes after phone sleep/lock
-  - fixed mobile chrome hide/show scroll jumps by keeping pane scroll geometry stable
-  - restyled the mobile UI, bottom nav, reader cards, stack cards, compare sheet, and action controls
-  - kept the stack switcher as a full vertical list instead of horizontal stack browsing
-  - kept the richer `Aa` reader settings sheet with incremental font controls and `San Francisco`
 - Current cache/version values in repo:
-  - `sw.js`: `const CACHE = 'scripture-v87'`
-  - `index.html`: `app.js?v=84`
-  - `index.html`: `style.css?v=89`
+  - `sw.js`: `const CACHE = 'scripture-v93'`
+  - `index.html`: `app.js?v=85`
+  - `index.html`: `style.css?v=94`
 - Recent pushed commits on `main`:
+  - `e9f7826` `Add hybrid reranking to Bible search`
+  - `052f589` `Add semantic Bible search via pgvector + Transformers.js`
+  - `ed5536d` `Use solid bg color for verse selection to remove overlap stripe`
+  - `fc2a9a7` `Revert verse selection highlight to red`
+  - `c4543ce` `Clean up multi-verse selection styling`
+  - `74c36b2` `Update handoff with latest UI fixes`
   - `7bc224e` `Merge adjacent selected verse highlights`
   - `5dff138` `Soften verse selection highlight`
   - `a4486cc` `Tighten grouped verse spacing`
-  - `386bfbf` `Disable native selection in compare sheet`
-  - `62095a0` `Fix dark reader card contrast`
-  - `d7c19e7` `Group Bible verses in one reader card`
-  - `d808950` `Preserve scroll on app resume`
-  - `9cf172a` `Refine mobile Bible UI`
-  - `c84d0cd` `Fix mobile chrome scroll jumps`
   - `8e1ff86` `Fix stack switcher clipping top stacks on mobile`
 
-## Changes Made
+---
 
-- Added a hard-press/long-press verse action mode in the Bible reader so verses can expose actions without cluttering the reader UI.
-- Disabled native iOS text selection/callout on verse rows so the custom hard-press action mode is not overridden by the system copy/lookup UI.
-- Disabled native iOS text selection/callout inside compare sheet rows so `Copy / Look Up / Translate` does not appear over compare text.
-- Added compare support for multiple selected verses, grouped by translation, in the compare sheet.
-- Added stack compare mode on cards via a dedicated Compare button, removed the old compare button from stack passage rows, and matched the new button styling to the other card actions.
+## ⚠️ Known Open Bug
+
+**Semantic search returns wrong results on phone.** When the user searches on device, the RPC call returns 30 results but they are not semantically ordered — random genealogy verses appear instead of the expected match (e.g. "Now faith is the substance..." should return Hebrews 11:1 first). The same RPC call works correctly when tested with the Node service key. Suspected causes:
+
+1. **Anon key vs service key** — the browser uses the anon key; the Node test used the service key. RLS on `verse_embeddings` allows public read, but double-check the policy is active in Supabase.
+2. **Vector type casting via PostgREST** — supabase-js sends the embedding as a JSON array; PostgREST must cast it to `vector(384)`. If the cast silently fails and the vector is null/zero, all verses have equal cosine distance and Supabase returns arbitrary ordering.
+3. **Transformers.js failing on mobile Safari** — if the in-browser embedding model fails to load and the code silently falls through, a null or garbage vector gets sent.
+
+**Fix to try first:** In `app.js` `embedQueryVector()`, stringify the Float32Array as a PostgreSQL-style vector literal `'[0.1, 0.2, ...]'` before passing to `.rpc()`, instead of passing a raw JS array. PostgREST is more reliable with text-format vectors.
+
+---
+
+## Changes Made (since last handoff)
+
+### Verse selection styling overhaul
+- Replaced the old `border-radius: 4px` + `margin-top: -7px` overlap approach that caused a visible horizontal stripe between adjacent selected verses.
+- `.verse-row.selected` now has `border-radius: 0` and a solid (non-alpha) background so the 6px row-overlap zone doesn't double-tint.
+- Only `.selected-start` rounds top corners and `.selected-end` rounds bottom corners — the selection renders as one continuous block.
+- Added a continuous `inset 2px 0 0` left accent bar across the whole selection.
+- Light theme: `#fdeced` (selected), `#fce6e9` (action-active). Dark theme: `#2b191e` (selected), `#361c22` (action-active).
+
+### Semantic Bible search (major feature)
+- New file `migration-add-verse-embeddings.sql` — run once in Supabase SQL editor. Creates `pgvector` extension, `verse_embeddings` table (book_id, chapter, verse, `embedding vector(384)`), HNSW cosine index, and `search_verses_semantic(query_embedding, match_count, target_translation)` RPC. **Already applied to live Supabase project.**
+- New file `embed-verses.js` — one-time Node job using `@xenova/transformers` (model: `Xenova/all-MiniLM-L6-v2`, 384-dim) to embed all 31,102 KJV verses and upsert into `verse_embeddings`. **Already run — all verses embedded.** Resumable (skips rows that already exist). Run with `SUPABASE_SERVICE_KEY=xxx node embed-verses.js`.
+- `package.json` — added `@xenova/transformers: ^2.17.2` dependency.
+- `app.js` `doSearch()` — completely rewritten. Reference parser still wins for direct lookups (e.g. "John 3:16" jumps to the verse). All other queries go through semantic search: Transformers.js is lazy-loaded in the browser the first time search opens (~25 MB one-time download, cached), the query is embedded locally (private, no API call), and `search_verses_semantic` RPC is called with the 384-dim vector. Results are returned in the active translation.
+- Embeddings are KJV-only (translation-independent meaning). Results are always shown in whatever translation the user has active, via the RPC join on `verses`.
+
+### Cache / deployment notes
+- Always bump `index.html` `style.css?v=N` and `app.js?v=N` query strings AND `sw.js` `CACHE` name together whenever CSS or JS changes. Forgetting either means the phone serves stale files.
+- GitHub Pages serves `index.html` with `Cache-Control: max-age=600` (10 min). If a change isn't showing on phone, the browser HTTP cache still has the old HTML. Wait 10 min or hard-refresh.
+
+---
+
+## Changes Made (pre-Claude, from original Codex handoff)
+
+- Added a hard-press/long-press verse action mode in the Bible reader.
+- Disabled native iOS text selection/callout on verse rows and compare sheet rows.
+- Added compare support for multiple selected verses, grouped by translation.
+- Added stack compare mode on cards via a dedicated Compare button.
 - Converted the Bible reader to one grouped `.scripture-card` per chapter, with individual `.verse-row` elements inside it. Do not reintroduce per-verse cards unless explicitly requested.
 - Tightened grouped verse spacing by reducing row padding and using slight negative row margins.
-- Added selection grouping classes (`selected-start`, `selected-middle`, `selected-end`) so adjacent selected verses render as one continuous highlight instead of overlapping rounded rectangles.
-- Softened Bible verse selection styling to a translucent accent fill with a slim left accent edge on the active verse.
-- Fixed dark-mode contrast for the grouped reader card after the grouped-card change.
-- Tightened stacked verse row spacing so passages inside a stack visually match the normal reading layout more closely.
-- Fixed the stack compare bar so it dismisses before the compare sheet opens and clears compare state when the sheet closes.
-- Restored the reader verse layout after the long-press changes so the main reading experience stays usable.
-- Preserved stack scroll position when reordering items so the list does not jump after drag/reorder actions.
-- Preserved Bible and Stacks scroll positions across phone sleep/app resume with per-pane scroll restore logic.
-- Fixed the red verse highlight appearing on tap during scroll by scoping hover styles to hover-capable devices and clearing verse action mode when the user scrolls.
-- Removed the `Done` action from the books sheet header and left `Cancel`, backdrop tap, and drag dismissal as the close paths.
-- Reworked the books sheet drag interaction so it snaps by midpoint: more than 50% open returns to the top, 50% or less open snaps down to dismiss.
-- Smoothed and then slowed the books sheet open/close/snap animation so the motion feels less abrupt on mobile.
-- Fixed the reader settings panel becoming untappable on mobile by rendering it above its backdrop at the document root.
-- Added scroll-direction-based chrome hiding for both Bible reading and Stacks: downward reading scroll collapses the top controls and bottom nav, upward scroll reveals them again.
-- Softened the hide-on-read behavior so the chrome waits for a longer scroll and eases out more gradually instead of disappearing too quickly.
-- Fixed chrome hide/show scroll jumps by making top/bottom chrome overlay the panes while keeping stable scroll padding/geometry.
-- Added measured pane chrome heights with `ResizeObserver` so the scroll content reserves the correct top space without changing on hide/show.
-- Tightened verse spacing in both the Bible reader and stack cards by reducing per-verse vertical padding and row gaps.
-- Tightened verse spacing again in both the Bible reader and stack cards so adjacent verses sit even closer together.
-- Added Supabase-backed stack sync via a new `user_stack_state` table, with local `study_stacks` kept as the on-device cache and migration source.
-- Added account sign-in/sign-up/sign-out UI so stacks can sync across phone and laptop under one Supabase Auth user.
-- Added stack import/export controls so users can back up current stacks to JSON and merge-import them later before or after sync rollout.
-- Added a stack switcher that opens a vertical popup list of all stacks instead of relying on a horizontal stack rail.
-- Restyled stack card action controls to use clearer icon-and-label buttons for add/note/compare.
-- Added `San Francisco` as a selectable reader font using the Apple system font stack.
-- Reworked the reader settings (`Aa`) UI into a richer mobile-oriented sheet with expandable font choices and incremental size controls.
-- Changed the translation picker so tapping the same translation trigger toggles it closed.
-- Switched reader settings to the app's shared sheet/backdrop motion system so its mobile animation matches the other sheets.
-- Tuned scroll-direction chrome hiding again so it feels less hair-trigger on mobile.
-- Bumped the app asset cache versions in `index.html` and `sw.js` to force updated JS/CSS to load after changes.
-- Created this handoff document to capture the current app state, setup notes, and known issues for Claude.
+- Added selection grouping classes (`selected-start`, `selected-middle`, `selected-end`) so adjacent selected verses render as one continuous highlight.
+- Fixed dark-mode contrast for the grouped reader card.
+- Tightened stacked verse row spacing.
+- Fixed the stack compare bar dismiss/clear behavior.
+- Preserved stack and Bible scroll positions across phone sleep/app resume.
+- Fixed the red verse highlight appearing on tap during scroll.
+- Reworked the books sheet drag snap interaction (midpoint-based, not velocity).
+- Fixed the reader settings panel becoming untappable on mobile.
+- Added scroll-direction-based chrome hiding for both Bible and Stacks.
+- Fixed chrome hide/show scroll jumps with overlay chrome and stable scroll padding.
+- Added Supabase-backed stack sync via `user_stack_state` table.
+- Added account sign-in/sign-up/sign-out UI.
+- Added stack import/export controls.
+- Added a stack switcher (vertical popup list).
+- Added `San Francisco` as a selectable reader font.
+- Reworked reader settings into a richer mobile sheet.
+- Created this handoff document.
+
+---
 
 ## What This App Is
 
 A **Bible study PWA** (Progressive Web App) installable on iPhone/Android. Features:
 - Multi-translation Bible reader (18 translations: KJV, BSB, WEB, AKJV, UKJV, MKJV, LITV, CPDV, Darby, Webster, DRA, YLT, ASV, BBE, NHEB, Jubilee, LEB, Rotherham)
-- Search within the currently selected translation
-- "Stacks" — user-created collections of saved verses and grouped passages (cached in localStorage, synced to Supabase when signed in)
-- Greek word analysis for NT verses (word-by-word tagging + Strongs lexicon)
-- Compare translations side-by-side for a verse, selected verses, or the active stack block
+- **Semantic search** — meaning-based, typo-tolerant, powered by in-browser Transformers.js + Supabase pgvector
+- "Stacks" — user-created collections of saved verses (cached in localStorage, synced to Supabase when signed in)
+- Greek word analysis for NT verses
+- Compare translations side-by-side
 - Reader settings: font, size, spacing, light/dark theme
 - Account-based stack sync with Supabase Auth
-- JSON import/export for manual backup and restore of stacks
+- JSON import/export for stacks
 
 ---
 
@@ -93,26 +105,16 @@ A **Bible study PWA** (Progressive Web App) installable on iPhone/Android. Featu
 |-----|-------|---------|
 | Supabase Project URL | Check `config.js` | `config.js`, all import scripts |
 | Supabase Anon Key (public) | Check `config.js` | `config.js` — loaded by browser, safe to be public |
-| Supabase Service Role Key (secret) | Check `import.js`, `import-greek.js`, `clear.js`, `clear-greek.js` | Hardcoded in those scripts — **ROTATE immediately** |
-
-The anon key is fine to be public (it's a "publishable" key). The service key bypasses RLS and should never be in frontend code or committed to git. Some Node import scripts use `SUPABASE_SERVICE_KEY` from the environment instead, but the secret is already committed in several scripts and should be rotated.
+| Supabase Service Role Key (secret) | Check `import.js` | Hardcoded in old scripts — **ROTATE immediately** |
 
 ---
 
 ## Hosting
 
-**TODO: Codex, provide these details:**
-1. **Live URL + path**: Is the app deployed to `https://example.com/Scripture-app/` or `https://example.com/` or elsewhere?
-2. **Supabase table status**: Which of these exist + have data?
-   - `books` + `verses` (with `translation` column)?
-   - `nt_word_tags` + `strongs_lexicon` (Greek data)?
-3. **RLS policies**: Are public SELECT policies enabled on those tables?
-
-**Current setup (from repo):**
-- Git remote points to `https://github.com/nwabuokumich-debug/Scripture-app.git` and the current branch is `main`
-- `manifest.json` is configured for the path `/Scripture-app/` via `start_url` and `scope`
-- If the deployed path differs, update `manifest.json`
-- The service worker cache name is `scripture-v87` in `sw.js` — bump when deploying, and keep the `style.css?v=89` / `app.js?v=84` query strings in `index.html` aligned with the current build
+- Git remote: `https://github.com/nwabuokumich-debug/Scripture-app.git`, branch `main`
+- Live URL: `https://nwabuokumich-debug.github.io/Scripture-app/`
+- Deploy: push to `main` → GitHub Pages auto-deploys (usually 30–60s)
+- `manifest.json` has `start_url` and `scope` set to `/Scripture-app/`
 
 ---
 
@@ -120,69 +122,47 @@ The anon key is fine to be public (it's a "publishable" key). The service key by
 
 ### Tables
 
-**`books`**
-- `id` INTEGER PRIMARY KEY (1–66, matches canonical Bible book order)
-- `name` TEXT
-- `testament` TEXT — `'old'` or `'new'`
+**`books`** — `id` INTEGER PK (1–66), `name` TEXT, `testament` TEXT (`'old'`/`'new'`)
 
-**`verses`**
-- `id` SERIAL PRIMARY KEY
-- `book_id` INTEGER → references `books.id`
-- `chapter` INTEGER
-- `verse` INTEGER
-- `text` TEXT
-- `translation` TEXT NOT NULL DEFAULT `'kjv'` (added via `migration-add-translation.sql`)
+**`verses`** — `id` SERIAL PK, `book_id` → books, `chapter`, `verse`, `text`, `translation` (default `'kjv'`)
 
-**`nt_word_tags`** *(Greek — may or may not exist yet)*
-- Stores NT word-level Greek tagging data
-- Imported via `import-greek.js`
+**`verse_embeddings`** *(new — already created and populated)*
+- `book_id`, `chapter`, `verse` — composite PK
+- `embedding vector(384)` — all-MiniLM-L6-v2 embedding of KJV verse text
+- HNSW cosine index for fast similarity search
+- RLS: public read enabled
+- All 31,102 KJV verses are already embedded
 
-**`strongs_lexicon`** *(Greek — may or may not exist yet)*
-- Stores Strongs concordance entries
+**`nt_word_tags`** + **`strongs_lexicon`** — Greek data, may or may not exist
 
-**`user_stack_state`**
-- `user_id` UUID PRIMARY KEY → references `auth.users.id`
-- `stacks` JSONB NOT NULL DEFAULT `[]`
-- `updated_at` TIMESTAMPTZ NOT NULL
-- Protected by RLS so each authenticated user can only read/write their own stack state
-- Created by `migration-add-user-stack-state.sql`
+**`user_stack_state`** — `user_id` UUID PK, `stacks` JSONB, `updated_at` TIMESTAMPTZ; RLS per-user
+
+### RPC functions
+- `search_verses_semantic(query_embedding vector(384), match_count int, target_translation text)` — returns top N verses by cosine similarity, joined to `verses` and `books`. Grant to anon + authenticated.
 
 ### Indexes
 ```sql
--- Fast verse lookup
 idx_verses_location ON verses(book_id, chapter, verse, translation)
--- Full-text search
 idx_verses_fts ON verses USING gin(to_tsvector('english', text))
--- Translation filter
 idx_verses_translation ON verses(translation)
+idx_verse_embeddings_hnsw ON verse_embeddings USING hnsw (embedding vector_cosine_ops)
 ```
-
-### To set up a fresh database:
-1. Run `schema.sql` in Supabase SQL Editor (creates books + verses tables, inserts all 66 books)
-2. Run `migration-add-translation.sql` (adds translation column + indexes)
-3. Run import scripts for each translation (see below)
 
 ---
 
 ## Import Scripts
 
-All scripts require `npm install` first (installs `@supabase/supabase-js`). Secret handling is mixed: `import.js`, `import-greek.js`, `clear.js`, and `clear-greek.js` hardcode the service key, while the other import scripts read `SUPABASE_SERVICE_KEY` from the environment.
+All require `npm install` first. Run from repo root.
 
 | Script | What It Imports | How to Run |
 |--------|----------------|------------|
-| `import.js` | KJV — has service key hardcoded (old style) | `node import.js` |
-| `import-bsb.js` | BSB (Berean Standard Bible) | `SUPABASE_SERVICE_KEY=xxx node import-bsb.js` |
+| `embed-verses.js` | Embeddings for all KJV verses into `verse_embeddings` | `SUPABASE_SERVICE_KEY=xxx node embed-verses.js` |
+| `import-bsb.js` | BSB | `SUPABASE_SERVICE_KEY=xxx node import-bsb.js` |
 | `import-modern.js` | AKJV, UKJV, LITV, MKJV, CPDV | `SUPABASE_SERVICE_KEY=xxx node import-modern.js` |
-| `import-translations.js` | WEB, HNV, ERV, Darby, Webster, DRA, WNT (batch; can run one: `node import-translations.js web`) | `SUPABASE_SERVICE_KEY=xxx node import-translations.js` |
-| `import-web-dra.js` | WEB and DRA (OSIS XML format — separate from above) | `SUPABASE_SERVICE_KEY=xxx node import-web-dra.js` |
-| `import-greek.js` | NT Greek word tags + Strongs lexicon | `node import-greek.js` *(currently uses hardcoded secret)* |
-| `stack-admin.js` | Service-role admin tool for checking/searching/listing/updating live user stacks | `SUPABASE_SERVICE_KEY=xxx node stack-admin.js check` |
-| `clear.js` | Deletes all verses (use to re-import) | `node clear.js` *(currently uses hardcoded secret)* |
-| `clear-greek.js` | Deletes Greek data | `node clear-greek.js` *(currently uses hardcoded secret)* |
+| `import-translations.js` | WEB, Darby, Webster, DRA, etc. | `SUPABASE_SERVICE_KEY=xxx node import-translations.js` |
+| `stack-admin.js` | Admin CLI for user stacks | `SUPABASE_SERVICE_KEY=xxx node stack-admin.js check --email x` |
 
-Note: `import.js`, `import-greek.js`, `clear.js`, and `clear-greek.js` use a hardcoded service key. The other import/admin scripts read `SUPABASE_SERVICE_KEY` from the environment — safer.
-
-Note: `import-translations.js` and `import-web-dra.js` overlap on WEB/DRA — they use different source formats (CSV vs OSIS XML). Don't run both for the same translation.
+Scripts gitignored (contain hardcoded secrets): `import.js`, `import-greek.js`, `clear.js`, `clear-greek.js`
 
 ---
 
@@ -191,120 +171,82 @@ Note: `import-translations.js` and `import-web-dra.js` overlap on WEB/DRA — th
 ```
 /
 ├── index.html              # App shell, all UI markup
-├── app.js                  # All frontend logic (~2000 lines)
+├── app.js                  # All frontend logic
 ├── style.css               # All styles
-├── config.js               # Supabase URL + anon key (loaded by index.html)
+├── config.js               # Supabase URL + anon key
 ├── sw.js                   # Service worker (network-first caching)
 ├── manifest.json           # PWA manifest
 ├── icon.svg                # App icon
 ├── schema.sql              # Initial DB setup
-├── migration-add-translation.sql  # Adds translation column
-├── migration-add-user-stack-state.sql  # Adds synced user stack table + RLS policies
-├── stack-admin.js          # Service-role stack admin/debug CLI
-├── import*.js              # Data import scripts (Node.js, not browser)
-├── clear*.js               # Data deletion scripts
-└── package.json            # Node deps for import scripts only
+├── migration-add-translation.sql
+├── migration-add-user-stack-state.sql
+├── migration-add-verse-embeddings.sql  # pgvector + HNSW + RPC (already applied)
+├── embed-verses.js         # One-time KJV embedding job (already run)
+├── stack-admin.js          # Service-role stack admin CLI
+├── import*.js              # Data import scripts
+└── package.json            # Node deps (includes @xenova/transformers)
 ```
 
 ---
 
 ## Key Patterns in app.js
 
+### Search (semantic)
+- `preloadEmbedder()` — lazy-loads `Xenova/all-MiniLM-L6-v2` from jsDelivr CDN (~25MB, cached after first load). Called automatically when search sheet opens to warm the model in the background.
+- `embedQueryVector(text)` — awaits the embedder and returns a 384-element float array.
+- `doSearch()` — reference parser first (direct verse jump), then semantic: embed query → call `search_verses_semantic` RPC → render results in active translation.
+- **Known bug:** results may not be semantically ordered on device. See "Known Open Bug" section above.
+
 ### State variables (top of file)
-- `activeTranslation` — current translation slug (e.g. `'kjv'`), persisted in `localStorage`
+- `activeTranslation` — current translation slug, persisted in `localStorage`
 - `TRANSLATIONS` — map of slug → display name for all 18 translations
-- `selectedVerses` — array of selected verse objects (`{ ref, book, chapter, verse, text }`) used for stacks/compare
+- `selectedVerses` — array of selected verse objects for stacks/compare
 - `appMode` — `'bible'` or `'stacks'`
 - `activeStackId` — which stack is open
-- `stackCompareMode`, `activeStackCompareIdx`, `stackCompareSelectedRefs` — active compare state for one stack card at a time
-- `cardTranslations` — per-card translation override for stack cards
 - `greekByVerse` — cached Greek word data for current chapter
-
-### Supabase query patterns
-- All verse fetches filter by `translation` column
-- Greek data: queries `nt_word_tags` joined with `strongs_lexicon`
-- Search uses `.ilike('text', '%query%')` — simple substring match, not full-text search (despite the `to_tsvector` index in the schema)
-- Compare sheets group selected verses by translation, and stack compare uses the same renderer for one active stack block at a time
 
 ### Stacks
 - Local cache key: `study_stacks`
 - Cloud table: `user_stack_state`
 - Structure: `[{ id, title, verses: [{ passages: [{ ref, text }], note, addedAt }], createdAt, updatedAt }]`
-- Stack cards can hold one or more passages, and legacy single-verse cards are migrated on load
-- `cardTranslations` keeps per-card translation overrides in memory only
-- When signed in, remote stacks are merged with local cached stacks by `id`, newer `updatedAt` wins, and the merged result is pushed back to Supabase
-- When signed out, the app falls back to local cached stacks only
-- Export downloads the normalized stack JSON as a backup file
-- Import accepts exported JSON and merges it into current stacks by `id`, with newer `updatedAt` winning
+- When signed in, remote stacks merged with local by `id`, newer `updatedAt` wins
+
+### Verse selection classes (JS adds these)
+- `selected` — base tinted background + left accent bar
+- `selected-start` — top corners rounded (14px), extra top padding
+- `selected-middle` — no rounding (between two consecutive selected verses)
+- `selected-end` — bottom corners rounded (14px), extra bottom padding
+- `action-active` — slightly stronger tint + stronger left bar (the verse long-pressed)
 
 ### Service Worker
-- Cache name must be bumped manually in `sw.js` to force cache invalidation (`scripture-v87` at the moment)
-- Network-first strategy: always tries fresh, falls back to cache
+- Network-first: always fetches fresh, falls back to cache only on network failure
+- Cache name must be bumped in `sw.js` on every deploy
+- Browser HTTP cache (max-age=600 from GH Pages) is the real cache to bust — change query strings in `index.html`
 
 ---
 
-## Known Issues & Problems Encountered
+## Known Issues
 
-### 1. Service key committed to git
-`import.js`, `import-greek.js`, `clear.js`, and `clear-greek.js` hardcode the Supabase service role key. This secret is in git history. **Rotate the key at Supabase dashboard before doing anything else.**
-
-### 2. Greek tables may not exist
-The `nt_word_tags` and `strongs_lexicon` tables are referenced in `app.js` but their schema isn't in `schema.sql`. You'd need to check Supabase directly to see if they exist and are populated. If Greek word analysis is broken, these tables are the reason.
-
-### 3. Translations removed from the UI
-HNV, ERV, and WNT are not in the current `TRANSLATIONS` list in `app.js`, and `app.js` migrates users away from removed translation slugs.
-
-However, `import-translations.js` still contains import logic for HNV, ERV, and WNT, so the repo does **not** prove why those translations were removed from the UI or whether their upstream source data was unusable.
-
-### 4. Cache version must be bumped manually
-`sw.js` line 1: `const CACHE = 'scripture-v87'` — increment this number after any deployment to bust the PWA cache on users' devices. Forgetting this means users get stale JS/CSS.
-
-### 5. Browser cache-busting query strings
-`index.html` loads `app.js?v=84` and `style.css?v=89` — these query strings bust browser cache. Increment them in `index.html` when deploying changes.
-
-### 6. PWA path is hardcoded
-`manifest.json` has `"start_url": "/Scripture-app/"` and `"scope": "/Scripture-app/"`. If the app ever moves to a different URL path, both values must be updated or the PWA install will break.
-
-### 7. No build step
-This is vanilla JS — no bundler, no TypeScript. `app.js` uses ES modules (`import` from CDN). The `node_modules` folder is only for the import scripts, not used by the browser app at all.
+1. **Semantic search wrong results on device** — see "Known Open Bug" above. Priority fix.
+2. **Service key committed to git** — rotate at Supabase dashboard.
+3. **Greek tables may not exist** — `nt_word_tags` and `strongs_lexicon` not in `schema.sql`.
+4. **Cache busting is manual** — must bump `sw.js` CACHE + `index.html` query strings on every deploy.
 
 ---
 
 ## Tips for Codex
 
-1. **Read app.js top-to-bottom once** — all logic is in one file. State is at the top, DOM refs below that, then functions. There's no framework.
-
-2. **Translation picker** is a slide-up sheet triggered by clicking the translation label in the header. Tapping the same trigger again closes it.
-
-   The books sheet now dismisses via `Cancel`, backdrop tap, or drag-down. Its snap logic is midpoint-based, not velocity-based.
-
-   Bible reading and Stacks also use scroll-direction-based chrome hiding: reading downward collapses top/bottom chrome, and scrolling upward restores it.
-
-3. **Greek analysis** opens as a full-screen overlay (`#greek-page`). It's only available for NT books when Greek data exists.
-
-4. **Compare translations** is a bottom sheet modal (`#compare-backdrop`). It fetches all translations for a single verse in parallel and also groups selected verses by translation for multi-verse compare.
-   Native iOS text selection is intentionally disabled in the compare sheet to prevent the system `Copy / Look Up / Translate` overlay from covering the UI.
-
-5. **Stack compare mode** is entered by tapping the Compare button on a stack card. Only one stack card can be active at a time, and `Compare` uses the whole block unless specific passages inside that card have been selected.
-
-6. **To add a new translation**: add its slug/name to the `TRANSLATIONS` object in `app.js`, create an import script modeled after existing ones, and run it.
-
-7. **To deploy**: the repo remote is GitHub and the current branch is `main`, but the deployment mechanism is not confirmed in this repo. If this is a GitHub Pages project site, the current manifest expects the app at `/Scripture-app/`.
-
-8. **Auth now exists for stacks** — Bible/Greek reads are still public-read Supabase queries, but stack sync expects Supabase Auth plus the `user_stack_state` table + RLS. If the table is missing, the app still works locally and shows a sync issue state.
-
-9. **localStorage keys used**:
-   - `study_stacks` — local stack cache + migration source
-   - `active_translation` — last used translation slug
-   - `reader_settings` — single JSON blob with all reader prefs (theme, font, size, spacing)
-
-10. **Reader settings (`Aa`)** now use the shared sheet/backdrop motion system like the rest of the app. The panel includes:
-   - incremental font size up/down controls instead of only 4 fixed size buttons
-   - expandable font selection, including `San Francisco`
-   - theme and spacing controls tuned for mobile
-
-11. **Stacks UI** no longer expects the user to browse a horizontal stack rail. The current stack is shown in a single switcher control that opens a full vertical list of stacks.
-
-12. **Bible reader layout** uses one grouped `.scripture-card` for the chapter, with `.verse-row` children inside it. Selection styling depends on JS adding `selected-start`, `selected-middle`, and `selected-end` classes to adjacent selected rows. If changing selection UI, preserve this grouping behavior to avoid ugly overlapping rounded highlights.
-
-13. **Scroll resume** preserves `bibleContent.scrollTop` and `stacksContent.scrollTop` when the app is hidden/visible after phone sleep or lock. Avoid calling `renderStackView(..., { resetScroll: true })` on resume unless the user explicitly opened a different stack.
+1. **Read app.js top-to-bottom once** — all logic is in one file. No framework.
+2. **Translation picker** — slide-up sheet triggered by clicking translation label. Same trigger closes it.
+3. **Books sheet** — dismisses via Cancel, backdrop tap, or drag-down (midpoint snap).
+4. **Chrome hiding** — scroll-direction based for both Bible and Stacks.
+5. **Greek analysis** — full-screen overlay `#greek-page`, NT only.
+6. **Compare** — bottom sheet `#compare-backdrop`, groups verses by translation.
+7. **Stack compare mode** — one card at a time, uses whole block unless specific passages selected.
+8. **To add a new translation** — add slug/name to `TRANSLATIONS` in `app.js`, create import script, run it.
+9. **To deploy** — push to `main`. Bump cache versions first (see Cache section).
+10. **Auth for stacks** — Bible/Greek reads are public Supabase queries; stack sync needs Supabase Auth + `user_stack_state` table + RLS.
+11. **localStorage keys** — `study_stacks`, `active_translation`, `reader_settings`, `scripture_scroll_state`.
+12. **Bible reader layout** — one `.scripture-card` per chapter, `.verse-row` children. Do NOT reintroduce per-verse cards.
+13. **Scroll resume** — preserves `bibleContent.scrollTop` and `stacksContent.scrollTop` on app resume. Don't call `renderStackView(..., { resetScroll: true })` on resume.
+14. **Semantic search embeddings** — KJV-only, already in DB. The `verse_embeddings` table is keyed by (book_id, chapter, verse) — translation-agnostic. The RPC joins to whichever translation the user has active.
