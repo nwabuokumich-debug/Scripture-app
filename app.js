@@ -347,6 +347,8 @@ function openSearchSheet() {
   showPaneChrome(biblePane);
   openSheet(searchSheetBackdrop);
   setTimeout(() => searchInput.focus(), 60);
+  // Start warming the embedding model in the background so the first query is fast.
+  preloadEmbedder().catch(() => {});
 }
 
 function closeSearchSheet() {
@@ -1537,6 +1539,31 @@ async function openBibleLocation(book, chapter) {
 }
 
 // ── Search ────────────────────────────────────────────
+// Semantic search via Transformers.js (browser-side query embedding) +
+// Supabase pgvector (pre-computed verse embeddings, KJV canonical).
+const EMBED_MODEL_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+const EMBED_MODEL_NAME = 'Xenova/all-MiniLM-L6-v2';
+let _embedder = null;
+let _embedderPromise = null;
+
+function preloadEmbedder() {
+  if (_embedder) return Promise.resolve(_embedder);
+  if (_embedderPromise) return _embedderPromise;
+  _embedderPromise = (async () => {
+    const mod = await import(EMBED_MODEL_URL);
+    mod.env.allowLocalModels = false;
+    _embedder = await mod.pipeline('feature-extraction', EMBED_MODEL_NAME, { quantized: true });
+    return _embedder;
+  })();
+  return _embedderPromise;
+}
+
+async function embedQueryVector(text) {
+  const embedder = await preloadEmbedder();
+  const out = await embedder(text, { pooling: 'mean', normalize: true });
+  return Array.from(out.data);
+}
+
 async function doSearch() {
   const query = searchInput.value.trim();
   if (!query) {
@@ -1546,8 +1573,7 @@ async function doSearch() {
   searchBtn.disabled = true;
   searchBtn.textContent = '...';
   try {
-    searchResults.innerHTML = `<div class="search-empty"><span class="spinner"></span> Searching...</div>`;
-
+    // Reference parser still wins for direct lookups like "John 3:16"
     const ref = parseReference(query);
     if (ref) {
       clearSelection();
@@ -1559,12 +1585,24 @@ async function doSearch() {
       return;
     }
 
-    const { data, error } = await supabase
-      .from('verses')
-      .select('verse, chapter, text, book_id, books(name)')
-      .eq('translation', activeTranslation)
-      .ilike('text', `%${query}%`)
-      .limit(100);
+    const loadingMsg = _embedder
+      ? 'Searching...'
+      : 'Preparing search (one-time ~25 MB download)...';
+    searchResults.innerHTML = `<div class="search-empty"><span class="spinner"></span> ${escHtml(loadingMsg)}</div>`;
+
+    let queryVec;
+    try {
+      queryVec = await embedQueryVector(query);
+    } catch (err) {
+      updateSearchEmptyState(`Couldn't load search model: ${err.message || err}`);
+      return;
+    }
+
+    const { data, error } = await supabase.rpc('search_verses_semantic', {
+      query_embedding: queryVec,
+      match_count: 30,
+      target_translation: activeTranslation,
+    });
 
     if (error) {
       updateSearchEmptyState(`Search error: ${error.message}`);
@@ -1576,20 +1614,16 @@ async function doSearch() {
       return;
     }
 
-    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escaped})`, 'gi');
-
     let html = `<div class="result-count">${data.length} result${data.length !== 1 ? 's' : ''} for "${escHtml(query)}"</div>`;
     data.forEach((v, idx) => {
-      const refLabel = `${v.books.name} ${v.chapter}:${v.verse}`;
-      const highlighted = escHtml(v.text).replace(regex, '<mark>$1</mark>');
+      const refLabel = `${v.book_name} ${v.chapter}:${v.verse}`;
       html += `
         <div class="result-item" data-idx="${idx}">
           <div class="result-item-header">
             <div class="result-ref">${escHtml(refLabel)}</div>
             <button class="add-btn" data-idx="${idx}" title="Add to a Study Stack">+</button>
           </div>
-          <div class="result-text">${highlighted}</div>
+          <div class="result-text">${escHtml(v.text)}</div>
         </div>
       `;
     });
@@ -1613,8 +1647,8 @@ async function doSearch() {
         e.stopPropagation();
         const v = data[parseInt(btn.dataset.idx)];
         toggleVerseSelection({
-          ref: `${v.books.name} ${v.chapter}:${v.verse}`,
-          book: v.books.name,
+          ref: `${v.book_name} ${v.chapter}:${v.verse}`,
+          book: v.book_name,
           chapter: v.chapter,
           verse: v.verse,
           text: v.text

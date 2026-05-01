@@ -4,9 +4,11 @@
   "type": "module",
   "scripts": {
     "import": "node import.js",
-    "stack:admin": "node stack-admin.js"
+    "stack:admin": "node stack-admin.js",
+    "embed": "node embed-verses.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0"
+    "@supabase/supabase-js": "^2.39.0",
+    "@xenova/transformers": "^2.17.2"
   }
 }
