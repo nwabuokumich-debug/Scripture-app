@@ -1564,6 +1564,140 @@ async function embedQueryVector(text) {
   return Array.from(out.data);
 }
 
+const SEARCH_STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'he',
+  'her', 'him', 'his', 'i', 'in', 'is', 'it', 'its', 'me', 'my', 'no', 'not',
+  'now', 'of', 'on', 'or', 'our', 'she', 'so', 'that', 'the', 'their', 'them',
+  'then', 'there', 'these', 'they', 'this', 'thou', 'thy', 'to', 'unto', 'us',
+  'was', 'we', 'were', 'what', 'when', 'which', 'who', 'will', 'with', 'ye',
+  'you', 'your'
+]);
+
+function normalizeSearchText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function getSearchTerms(query) {
+  const seen = new Set();
+  return normalizeSearchText(query).split(/\s+/)
+    .filter(term => term.length >= 3 && !SEARCH_STOPWORDS.has(term))
+    .filter(term => {
+      if (seen.has(term)) return false;
+      seen.add(term);
+      return true;
+    })
+    .slice(0, 8);
+}
+
+function levenshteinWithin(a, b, maxDistance = 1) {
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  const curr = Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    let rowMin = curr[0];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+      rowMin = Math.min(rowMin, curr[j]);
+    }
+    if (rowMin > maxDistance) return maxDistance + 1;
+    prev.splice(0, prev.length, ...curr);
+  }
+  return prev[b.length];
+}
+
+function scoreKeywordMatch(query, verseText) {
+  const terms = getSearchTerms(query);
+  if (!terms.length) return 0;
+  const normalizedText = normalizeSearchText(verseText);
+  const words = normalizedText.split(/\s+/).filter(Boolean);
+  let score = 0;
+  for (const term of terms) {
+    if (normalizedText.includes(term)) {
+      score += term.length >= 6 ? 4 : 3;
+      continue;
+    }
+    const matched = words.some(word => {
+      if (word.startsWith(term) || term.startsWith(word)) return true;
+      if (term.length < 5 || word.length < 5) return false;
+      return levenshteinWithin(term, word, 1) <= 1;
+    });
+    if (matched) score += term.length >= 5 ? 2.5 : 2;
+  }
+  const phrase = normalizeSearchText(query);
+  if (phrase.length >= 8 && normalizedText.includes(phrase)) score += 8;
+  return score / terms.length;
+}
+
+function normalizeSearchResult(row, source = 'semantic') {
+  return {
+    book_id: row.book_id,
+    book_name: row.book_name || row.books?.name || '',
+    chapter: row.chapter,
+    verse: row.verse,
+    text: row.text,
+    similarity: Number(row.similarity) || 0,
+    sources: new Set([source])
+  };
+}
+
+async function fetchKeywordCandidates(query) {
+  const terms = getSearchTerms(query).filter(term => term.length >= 4);
+  const candidateTerms = terms.length ? terms.slice(0, 5) : [normalizeSearchText(query)].filter(Boolean);
+  if (!candidateTerms.length) return [];
+
+  const responses = await Promise.all(candidateTerms.map(term =>
+    supabase
+      .from('verses')
+      .select('verse, chapter, text, book_id, books(name)')
+      .eq('translation', activeTranslation)
+      .ilike('text', `%${term}%`)
+      .limit(50)
+  ));
+
+  const rows = [];
+  responses.forEach(({ data, error }) => {
+    if (!error && data?.length) rows.push(...data);
+  });
+  return rows.map(row => normalizeSearchResult(row, 'keyword'));
+}
+
+function mergeAndRankSearchResults(query, semanticRows = [], keywordRows = []) {
+  const byRef = new Map();
+  [...semanticRows.map(row => normalizeSearchResult(row, 'semantic')), ...keywordRows].forEach(row => {
+    const key = `${row.book_id}:${row.chapter}:${row.verse}`;
+    const existing = byRef.get(key);
+    if (!existing) {
+      byRef.set(key, row);
+      return;
+    }
+    existing.similarity = Math.max(existing.similarity, row.similarity || 0);
+    row.sources.forEach(source => existing.sources.add(source));
+  });
+
+  return [...byRef.values()]
+    .map(row => {
+      const keywordScore = scoreKeywordMatch(query, row.text);
+      const semanticScore = Math.max(0, row.similarity || 0);
+      const hybridBonus = row.sources.has('keyword') && row.sources.has('semantic') ? 1.25 : 0;
+      return {
+        ...row,
+        _rank: keywordScore * 8 + semanticScore * 4 + hybridBonus
+      };
+    })
+    .filter(row => row._rank > 0.4)
+    .sort((a, b) => b._rank - a._rank)
+    .slice(0, 30);
+}
+
 async function doSearch() {
   const query = searchInput.value.trim();
   if (!query) {
@@ -1587,28 +1721,40 @@ async function doSearch() {
 
     const loadingMsg = _embedder
       ? 'Searching...'
-      : 'Preparing search (one-time ~25 MB download)...';
+      : 'Preparing smart search (one-time ~25 MB download)...';
     searchResults.innerHTML = `<div class="search-empty"><span class="spinner"></span> ${escHtml(loadingMsg)}</div>`;
 
+    const keywordPromise = fetchKeywordCandidates(query);
+    let keywordRows = [];
+    try {
+      keywordRows = await keywordPromise;
+    } catch {}
+
     let queryVec;
+    let semanticRows = [];
     try {
       queryVec = await embedQueryVector(query);
+      const { data, error } = await supabase.rpc('search_verses_semantic', {
+        query_embedding: queryVec,
+        match_count: 120,
+        target_translation: activeTranslation,
+      });
+      if (error) {
+        if (!keywordRows.length) {
+          updateSearchEmptyState(`Search error: ${error.message}`);
+          return;
+        }
+      } else {
+        semanticRows = data || [];
+      }
     } catch (err) {
-      updateSearchEmptyState(`Couldn't load search model: ${err.message || err}`);
-      return;
+      if (!keywordRows.length) {
+        updateSearchEmptyState(`Couldn't load search model: ${err.message || err}`);
+        return;
+      }
     }
 
-    const { data, error } = await supabase.rpc('search_verses_semantic', {
-      query_embedding: queryVec,
-      match_count: 30,
-      target_translation: activeTranslation,
-    });
-
-    if (error) {
-      updateSearchEmptyState(`Search error: ${error.message}`);
-      return;
-    }
-
+    const data = mergeAndRankSearchResults(query, semanticRows, keywordRows);
     if (!data?.length) {
       updateSearchEmptyState(`No results for "${query}"`);
       return;
