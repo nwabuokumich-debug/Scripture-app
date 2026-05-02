@@ -1754,9 +1754,10 @@ function mergeAndRankSearchResults(query, semanticRows = [], keywordRows = []) {
       const semanticScore = Math.max(0, row.similarity || 0);
       const hybridBonus = row.sources.has('keyword') && row.sources.has('semantic') ? 1.25 : 0;
       const phraseScore = scorePhraseMatch(row.text);
+      const semanticBoost = semanticScore >= 0.74 ? 14 : semanticScore >= 0.70 ? 5 : semanticScore >= 0.66 ? 2 : 0;
       return {
         ...row,
-        _rank: keywordScore * 8 + semanticScore * 4 + hybridBonus + phraseScore
+        _rank: keywordScore * 5 + semanticScore * 8 + semanticBoost + hybridBonus + phraseScore
       };
     })
     .filter(row => row._rank > 0.4)
