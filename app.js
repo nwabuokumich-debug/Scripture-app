@@ -1734,8 +1734,10 @@ async function doSearch() {
     let semanticRows = [];
     try {
       queryVec = await embedQueryVector(query);
+      // Send pgvector input as a stable vector literal instead of relying on JS array casting.
+      const queryVectorLiteral = `[${queryVec.map((value) => Number(value).toFixed(8)).join(',')}]`;
       const { data, error } = await supabase.rpc('search_verses_semantic', {
-        query_embedding: queryVec,
+        query_embedding: queryVectorLiteral,
         match_count: 120,
         target_translation: activeTranslation,
       });
