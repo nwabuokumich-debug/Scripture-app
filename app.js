@@ -1671,6 +1671,51 @@ async function fetchKeywordCandidates(query) {
 }
 
 function mergeAndRankSearchResults(query, semanticRows = [], keywordRows = []) {
+  const normalizePhraseText = text => String(text || '')
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const scorePhraseMatch = verseText => {
+    const normalizedQuery = normalizePhraseText(query);
+    const normalizedVerse = normalizePhraseText(verseText);
+    if (!normalizedQuery || !normalizedVerse) return 0;
+    if (normalizedVerse.includes(normalizedQuery)) return 5;
+
+    const queryWords = normalizedQuery.split(' ').filter(Boolean);
+    const verseWords = normalizedVerse.split(' ').filter(Boolean);
+    let score = 0;
+
+    if (queryWords.length >= 3) {
+      for (let i = 0; i <= queryWords.length - 3; i++) {
+        const phrase = queryWords.slice(i, i + 3).join(' ');
+        if (normalizedVerse.includes(phrase)) {
+          score = Math.max(score, 2);
+          break;
+        }
+      }
+    }
+
+    const importantWords = queryWords.filter(word => word.length >= 4 && !SEARCH_STOPWORDS.has(word));
+    if (importantWords.length >= 2) {
+      const positions = [];
+      verseWords.forEach((word, idx) => {
+        if (importantWords.includes(word)) positions.push(idx);
+      });
+      for (let i = 0; i < positions.length; i++) {
+        for (let j = i + 1; j < positions.length; j++) {
+          if (positions[j] - positions[i] <= 8) {
+            score = Math.max(score, 1);
+            break;
+          }
+        }
+        if (score >= 1) break;
+      }
+    }
+
+    return score;
+  };
   const byRef = new Map();
   [...semanticRows.map(row => normalizeSearchResult(row, 'semantic')), ...keywordRows].forEach(row => {
     const key = `${row.book_id}:${row.chapter}:${row.verse}`;
@@ -1688,9 +1733,10 @@ function mergeAndRankSearchResults(query, semanticRows = [], keywordRows = []) {
       const keywordScore = scoreKeywordMatch(query, row.text);
       const semanticScore = Math.max(0, row.similarity || 0);
       const hybridBonus = row.sources.has('keyword') && row.sources.has('semantic') ? 1.25 : 0;
+      const phraseScore = scorePhraseMatch(row.text);
       return {
         ...row,
-        _rank: keywordScore * 8 + semanticScore * 4 + hybridBonus
+        _rank: keywordScore * 8 + semanticScore * 4 + hybridBonus + phraseScore
       };
     })
     .filter(row => row._rank > 0.4)
