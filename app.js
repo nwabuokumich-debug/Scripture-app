@@ -1652,7 +1652,24 @@ function normalizeSearchResult(row, source = 'semantic') {
 async function fetchKeywordCandidates(query) {
   const terms = getSearchTerms(query).filter(term => term.length >= 4);
   const candidateTerms = terms.length ? terms.slice(0, 5) : [normalizeSearchText(query)].filter(Boolean);
-  if (!candidateTerms.length) return [];
+  const queryWords = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  const phraseTerms = [];
+  for (const size of [4, 3]) {
+    for (let i = 0; i <= queryWords.length - size; i++) {
+      const phrase = queryWords.slice(i, i + size).join(' ');
+      if (phrase.length >= 8 && !phraseTerms.includes(phrase)) phraseTerms.push(phrase);
+    }
+  }
+  if (!candidateTerms.length && !phraseTerms.length) return [];
+
+  const phraseResponses = await Promise.all(phraseTerms.slice(0, 8).map(phrase =>
+    supabase
+      .from('verses')
+      .select('verse, chapter, text, book_id, books(name)')
+      .eq('translation', activeTranslation)
+      .ilike('text', `%${phrase}%`)
+      .limit(20)
+  ));
 
   const responses = await Promise.all(candidateTerms.map(term =>
     supabase
@@ -1660,10 +1677,13 @@ async function fetchKeywordCandidates(query) {
       .select('verse, chapter, text, book_id, books(name)')
       .eq('translation', activeTranslation)
       .ilike('text', `%${term}%`)
-      .limit(50)
+      .limit(80)
   ));
 
   const rows = [];
+  phraseResponses.forEach(({ data, error }) => {
+    if (!error && data?.length) rows.push(...data);
+  });
   responses.forEach(({ data, error }) => {
     if (!error && data?.length) rows.push(...data);
   });
