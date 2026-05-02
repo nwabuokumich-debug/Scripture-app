@@ -1,8 +1,9 @@
-// One-time job: embed every KJV verse with all-MiniLM-L6-v2 and upsert
+// One-time job: embed every verse for one translation with all-MiniLM-L6-v2 and upsert
 // the 384-dim vector into the verse_embeddings table on Supabase.
 //
 // Prereq: run migration-add-verse-embeddings.sql first.
-// Then:   node embed-verses.js
+// Existing DBs also need migration-translation-aware-embeddings.sql once.
+// Then:   TRANSLATION=bsb node embed-verses.js
 //
 // Resumable: skips verses that already have an embedding row.
 
@@ -16,7 +17,7 @@ if (!SUPABASE_SERVICE_KEY) {
   process.exit(1);
 }
 
-const TRANSLATION  = 'kjv';
+const TRANSLATION  = (process.env.TRANSLATION || 'kjv').toLowerCase();
 const MODEL_NAME   = 'Xenova/all-MiniLM-L6-v2';
 const BATCH_EMBED  = 32;
 const BATCH_UPLOAD = 200;
@@ -50,11 +51,12 @@ async function fetchExistingKeys() {
   while (true) {
     const { data, error } = await supabase
       .from('verse_embeddings')
-      .select('book_id, chapter, verse')
+      .select('translation, book_id, chapter, verse')
+      .eq('translation', TRANSLATION)
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`fetch existing: ${error.message}`);
     if (!data?.length) break;
-    for (const r of data) keys.add(`${r.book_id}:${r.chapter}:${r.verse}`);
+    for (const r of data) keys.add(`${r.translation}:${r.book_id}:${r.chapter}:${r.verse}`);
     if (data.length < PAGE) break;
     from += PAGE;
   }
@@ -73,13 +75,13 @@ async function main() {
   const embedder = await pipeline('feature-extraction', MODEL_NAME, { quantized: true });
   console.log('Model loaded.');
 
-  console.log('Fetching KJV verses...');
+  console.log(`Fetching ${TRANSLATION.toUpperCase()} verses...`);
   const verses = await fetchAllVerses();
   console.log(`Got ${verses.length} verses.`);
 
   console.log('Checking which verses already have embeddings...');
   const existing = await fetchExistingKeys();
-  const todo = verses.filter(v => !existing.has(`${v.book_id}:${v.chapter}:${v.verse}`));
+  const todo = verses.filter(v => !existing.has(`${TRANSLATION}:${v.book_id}:${v.chapter}:${v.verse}`));
   console.log(`${existing.size} already embedded; ${todo.length} to process.`);
   if (!todo.length) { console.log('Nothing to do.'); return; }
 
@@ -91,7 +93,7 @@ async function main() {
     if (!pending.length) return;
     const { error } = await supabase
       .from('verse_embeddings')
-      .upsert(pending, { onConflict: 'book_id,chapter,verse' });
+      .upsert(pending, { onConflict: 'translation,book_id,chapter,verse' });
     if (error) throw new Error(`upsert: ${error.message}`);
     pending = [];
   }
@@ -105,6 +107,7 @@ async function main() {
     for (let j = 0; j < batch.length; j++) {
       const slice = Array.from(out.data.slice(j * dim, (j + 1) * dim));
       pending.push({
+        translation: TRANSLATION,
         book_id: batch[j].book_id,
         chapter: batch[j].chapter,
         verse:   batch[j].verse,

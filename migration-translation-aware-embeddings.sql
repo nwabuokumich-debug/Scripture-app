@@ -1,34 +1,24 @@
--- Semantic search: pgvector + verse embeddings + RPC
--- Run this in the Supabase SQL editor once.
+-- Upgrade semantic search embeddings from KJV-only rows to per-translation rows.
+-- Run this once before embedding a modern-English translation such as BSB.
 
 create extension if not exists vector;
 
-create table if not exists verse_embeddings (
-  translation text not null default 'kjv',
-  book_id   integer not null,
-  chapter   integer not null,
-  verse     integer not null,
-  embedding vector(384) not null,
-  primary key (translation, book_id, chapter, verse)
-);
+alter table verse_embeddings
+  add column if not exists translation text not null default 'kjv';
 
--- HNSW index for fast cosine-similarity nearest-neighbor search
-create index if not exists idx_verse_embeddings_hnsw
-  on verse_embeddings
-  using hnsw (embedding vector_cosine_ops);
+alter table verse_embeddings
+  drop constraint if exists verse_embeddings_pkey;
+
+alter table verse_embeddings
+  add primary key (translation, book_id, chapter, verse);
 
 create index if not exists idx_verse_embeddings_translation
   on verse_embeddings (translation);
 
--- Public read of embeddings is fine (same as verses table)
-alter table verse_embeddings enable row level security;
-drop policy if exists "verse_embeddings public read" on verse_embeddings;
-create policy "verse_embeddings public read"
-  on verse_embeddings for select
-  using (true);
+create index if not exists idx_verse_embeddings_hnsw
+  on verse_embeddings
+  using hnsw (embedding vector_cosine_ops);
 
--- RPC: take a query embedding, return the top N most-similar verses
--- in the requested translation, joined back to the verses table.
 create or replace function search_verses_semantic(
   query_embedding vector(384),
   match_count     int  default 30,
