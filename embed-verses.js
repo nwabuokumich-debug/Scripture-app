@@ -20,7 +20,7 @@ if (!SUPABASE_SERVICE_KEY) {
 const TRANSLATION  = (process.env.TRANSLATION || 'kjv').toLowerCase();
 const MODEL_NAME   = 'Xenova/all-MiniLM-L6-v2';
 const BATCH_EMBED  = 32;
-const BATCH_UPLOAD = 200;
+const BATCH_UPLOAD = Number(process.env.BATCH_UPLOAD || 40);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
