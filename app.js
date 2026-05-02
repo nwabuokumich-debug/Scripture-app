@@ -1540,7 +1540,7 @@ async function openBibleLocation(book, chapter) {
 
 // ── Search ────────────────────────────────────────────
 // Semantic search via Transformers.js (browser-side query embedding) +
-// Supabase pgvector (pre-computed verse embeddings, active translation with KJV fallback).
+// Supabase pgvector (pre-computed verse embeddings across available translations).
 const EMBED_MODEL_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
 const EMBED_MODEL_NAME = 'Xenova/all-MiniLM-L6-v2';
 let _embedder = null;

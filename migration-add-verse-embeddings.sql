@@ -45,20 +45,26 @@ returns table (
 language sql
 stable
 as $$
-  with selected_embeddings as (
-    select ve.*
+  with nearest_embedding_rows as (
+    select
+      ve.book_id,
+      ve.chapter,
+      ve.verse,
+      ve.embedding <=> query_embedding as distance
     from verse_embeddings ve
-    where ve.translation = target_translation
-    union all
-    select ve.*
-    from verse_embeddings ve
-    where ve.translation = 'kjv'
-      and not exists (
-        select 1
-        from verse_embeddings target_ve
-        where target_ve.translation = target_translation
-        limit 1
-      )
+    order by ve.embedding <=> query_embedding
+    limit greatest(match_count * 12, 180)
+  ),
+  semantic_matches as (
+    select
+      book_id,
+      chapter,
+      verse,
+      min(distance) as distance
+    from nearest_embedding_rows
+    group by book_id, chapter, verse
+    order by min(distance)
+    limit match_count
   )
   select
     v.book_id,
@@ -66,16 +72,15 @@ as $$
     v.chapter,
     v.verse,
     v.text,
-    (1 - (ve.embedding <=> query_embedding))::real as similarity
-  from selected_embeddings ve
+    (1 - sm.distance)::real as similarity
+  from semantic_matches sm
   join verses v
-    on v.book_id = ve.book_id
-   and v.chapter = ve.chapter
-   and v.verse   = ve.verse
+    on v.book_id = sm.book_id
+   and v.chapter = sm.chapter
+   and v.verse   = sm.verse
    and v.translation = target_translation
   join books b on b.id = v.book_id
-  order by ve.embedding <=> query_embedding
-  limit match_count;
+  order by sm.distance;
 $$;
 
 grant execute on function search_verses_semantic(vector, int, text) to anon, authenticated;
