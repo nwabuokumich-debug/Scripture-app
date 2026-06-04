@@ -1,4 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { Voice, initVoice } from './voice.js?v=1';
 
 // ── Init ─────────────────────────────────────────────
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -65,6 +66,7 @@ let selectedVerses  = [];
 let verseActionMode = false;
 let activeActionVerseNum = null;
 let verseActionPressCleanup = null;
+let verseMousePressCleanup = null;
 let suppressVerseTapUntil = 0;
 let stackCompareMode = false;
 let activeStackCompareIdx = null;
@@ -72,6 +74,9 @@ let stackCompareSelectedRefs = [];
 let bookOrderMode   = localStorage.getItem('book_order_mode') || 'traditional';
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 'UKJV', mkjv: 'MKJV', litv: 'LITV', cpdv: 'CPDV', darby: 'Darby', webster: 'Webster', dra: 'DRA', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
+const bookChapterCounts = new Map();
+const pendingChapterCountLoads = new Set();
+let expandedBookId = null;
 const chromeScrollState = new WeakMap();
 const STACKS_STORAGE_KEY = 'study_stacks';
 const SCROLL_STATE_STORAGE_KEY = 'scripture_scroll_state';
@@ -331,6 +336,7 @@ function bindPaneChromeScroll(
 function openBookSheet() {
   showPaneChrome(biblePane);
   syncBookOrderTabs();
+  expandedBookId = activeBook?.id ?? expandedBookId;
   renderBookList();
   resetBookSheetInlineMotion();
   bookSheet.classList.remove('dragging');
@@ -569,6 +575,8 @@ translationLabel.addEventListener('click', e => {
   openTranslationPicker(translationLabel, activeTranslation, key => {
     activeTranslation = key;
     localStorage.setItem('active_translation', key);
+    bookChapterCounts.clear();
+    pendingChapterCountLoads.clear();
     translationLabel.textContent = TRANSLATIONS[key];
     document.title = `Scripture Search — ${TRANSLATIONS[key]} Bible`;
     updateBibleChrome();
@@ -629,6 +637,23 @@ function getOrderedBooks() {
     return books.sort((a, b) => a.name.localeCompare(b.name));
   }
   return books;
+}
+
+async function getBookChapterCount(book) {
+  if (!book) return 1;
+  if (bookChapterCounts.has(book.id)) return bookChapterCounts.get(book.id);
+
+  const { data } = await supabase
+    .from('verses')
+    .select('chapter')
+    .eq('book_id', book.id)
+    .eq('translation', activeTranslation)
+    .order('chapter', { ascending: false })
+    .limit(1);
+
+  const total = data?.[0]?.chapter ?? 1;
+  bookChapterCounts.set(book.id, total);
+  return total;
 }
 
 function updateNavState() {
@@ -900,15 +925,63 @@ function renderBookList() {
   }
 
   ordered.forEach(book => {
+    const item = document.createElement('div');
+    const isExpanded = expandedBookId === book.id;
+    item.className = 'book-item-wrap' + (isExpanded ? ' expanded' : '');
+
     const button = document.createElement('button');
     button.className = 'book-item' + (activeBook?.id === book.id ? ' active' : '');
     button.type = 'button';
-    button.innerHTML = `<span class="book-item-label">${escHtml(book.name)}</span>`;
-    button.addEventListener('click', () => selectBook(book));
-    bookList.appendChild(button);
+    button.setAttribute('aria-expanded', String(isExpanded));
+    button.innerHTML = `
+      <span class="book-item-label">${escHtml(book.name)}</span>
+      <span class="book-item-caret" aria-hidden="true">${isExpanded ? '^' : 'v'}</span>
+    `;
+    button.addEventListener('click', () => {
+      expandedBookId = isExpanded ? null : book.id;
+      renderBookList();
+      if (!isExpanded && !bookChapterCounts.has(book.id) && !pendingChapterCountLoads.has(book.id)) {
+        pendingChapterCountLoads.add(book.id);
+        getBookChapterCount(book).finally(() => {
+          pendingChapterCountLoads.delete(book.id);
+          if (expandedBookId === book.id) renderBookList();
+        });
+      }
+    });
+    item.appendChild(button);
+
+    if (isExpanded) {
+      const total = bookChapterCounts.get(book.id);
+      const grid = document.createElement('div');
+      grid.className = 'book-chapter-grid';
+
+      if (!total) {
+        grid.innerHTML = `<div class="book-chapter-loading">Loading chapters...</div>`;
+        if (!pendingChapterCountLoads.has(book.id)) {
+          pendingChapterCountLoads.add(book.id);
+          getBookChapterCount(book).finally(() => {
+            pendingChapterCountLoads.delete(book.id);
+            if (expandedBookId === book.id) renderBookList();
+          });
+        }
+      } else {
+        for (let i = 1; i <= total; i += 1) {
+          const chapterBtn = document.createElement('button');
+          chapterBtn.className = 'book-chapter-btn' + (activeBook?.id === book.id && activeChapter === i ? ' active' : '');
+          chapterBtn.type = 'button';
+          chapterBtn.textContent = i;
+          chapterBtn.addEventListener('click', () => selectBookChapter(book, i));
+          grid.appendChild(chapterBtn);
+        }
+      }
+
+      item.appendChild(grid);
+    }
+
+    bookList.appendChild(item);
   });
 
-  const activeRow = bookList.querySelector('.book-item.active');
+  const activeRow = bookList.querySelector('.book-item-wrap.expanded') || bookList.querySelector('.book-item.active');
   if (activeRow) {
     requestAnimationFrame(() => activeRow.scrollIntoView({ block: 'center', behavior: 'smooth' }));
   }
@@ -916,53 +989,37 @@ function renderBookList() {
 
 // ── Select book ───────────────────────────────────────
 async function selectBook(book) {
+  await selectBookChapter(book, 1);
+}
+
+async function selectBookChapter(book, chapter) {
   appMode = 'bible';
   updateNavState();
   activeTestament = book.testament;
   activeBook = book;
-  activeChapter = null;
+  activeChapter = chapter;
+  expandedBookId = book.id;
   updateBibleChrome();
-  renderBookList();
-  closeBookSheet();
-
-  const { data } = await supabase
-    .from('verses')
-    .select('chapter')
-    .eq('book_id', book.id)
-    .eq('translation', activeTranslation)
-    .order('chapter', { ascending: false })
-    .limit(1);
-
-  const totalChapters = data?.[0]?.chapter ?? 1;
+  const totalChapters = await getBookChapterCount(book);
   renderChapterBar(totalChapters);
-  await selectChapter(1);
+  closeBookSheet();
+  await selectChapter(chapter);
 }
 
 // ── Chapter bar ───────────────────────────────────────
 function renderChapterBar(total) {
-  chapterBar.innerHTML = `<span>Chapter</span>`;
-  for (let i = 1; i <= total; i++) {
-    const btn = document.createElement('button');
-    btn.className = 'chapter-btn';
-    btn.textContent = i;
-    btn.addEventListener('click', () => selectChapter(i));
-    chapterBar.appendChild(btn);
-  }
+  chapterBar.dataset.totalChapters = String(total ?? 0);
+  chapterBar.innerHTML = '';
   schedulePaneChromeMeasure();
 }
 
 // ── Select chapter ────────────────────────────────────
 async function selectChapter(num) {
   if (!activeBook) return;
+  Voice.stopScripture();
   activeChapter = num;
   updateBibleChrome();
-
-  chapterBar.querySelectorAll('.chapter-btn').forEach((btn, i) => {
-    btn.classList.toggle('active', i + 1 === num);
-    if (i + 1 === num) {
-      btn.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-    }
-  });
+  renderBookList();
 
   verseArea.innerHTML = `<div class="state-msg"><span class="spinner"></span> Loading…</div>`;
 
@@ -1006,11 +1063,15 @@ function renderVerses(verses) {
   let html = `
     <section class="reader-hero">
       <div class="reader-kicker">${getTestamentLabel(activeBook.testament)}</div>
-      <div class="book-title">${escHtml(activeBook.name)}</div>
+      <button class="book-title book-title-btn" type="button">${escHtml(activeBook.name)}</button>
       <div class="reader-meta">
         <span class="reader-meta-pill">Chapter ${activeChapter}</span>
         <span class="reader-meta-pill">${TRANSLATIONS[activeTranslation]}</span>
         ${hasGreekChapter ? '<span class="reader-meta-pill">Greek Study Ready</span>' : ''}
+        ${Voice.isSupported ? `<button class="reader-play-btn" type="button" aria-label="Listen to this chapter">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 4.5l9 5.5-9 5.5z" fill="currentColor"/></svg>
+          <span>Listen</span>
+        </button>` : ''}
       </div>
     </section>
     <section class="scripture-card">
@@ -1027,10 +1088,43 @@ function renderVerses(verses) {
   });
   html += `</section>`;
   verseArea.innerHTML = html;
+  verseArea.querySelector('.book-title-btn')?.addEventListener('click', openBookSheet);
+  verseArea.querySelector('.reader-play-btn')?.addEventListener('click', playCurrentChapter);
 
   bibleContent.scrollTop = 0;
   resetChromeScroll(bibleContent, biblePane);
 }
+
+// ── Voice Mode integration ────────────────────────────
+function chapterVoiceItems() {
+  if (!activeBook || !activeChapter) return [];
+  return currentVerses.map(v => ({
+    ref: `${activeBook.name} ${activeChapter}:${v.verse}`,
+    text: v.text,
+    vnum: v.verse,
+  }));
+}
+function playCurrentChapter() {
+  if (!Voice.isSupported) return;
+  const items = chapterVoiceItems();
+  if (items.length) Voice.playScripture(items);
+}
+function clearVoiceHighlight() {
+  document.querySelectorAll('.verse-row.verse-speaking').forEach(r => r.classList.remove('verse-speaking'));
+}
+function highlightSpokenVerse(item) {
+  clearVoiceHighlight();
+  if (!item || item.vnum == null || appMode !== 'bible') return;
+  const row = verseArea.querySelector(`.verse-row[data-vnum="${item.vnum}"]`);
+  if (!row) return;
+  row.classList.add('verse-speaking');
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  row.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+}
+initVoice({
+  onItemStart: highlightSpokenVerse,
+  onStateChange: state => { if (state === 'idle') clearVoiceHighlight(); },
+});
 
 // ── Compare translations ───────────────────────────────
 const compareBackdrop = document.getElementById('compare-backdrop');
@@ -1342,6 +1436,33 @@ stackDetail.addEventListener('click', e => {
 });
 
 // ── Verse click → action mode ─────────────────────────
+function startVerseActionFromRow(row) {
+  const verseData = getCurrentVerseData(parseInt(row.dataset.vnum));
+  if (!verseData) return false;
+  startVerseActionMode(verseData, row);
+  return true;
+}
+
+function selectVerseRange(fromVerse, toVerse) {
+  if (fromVerse == null || toVerse == null) return false;
+  const start = Math.min(fromVerse, toVerse);
+  const end = Math.max(fromVerse, toVerse);
+  let changed = false;
+
+  for (let verseNum = start; verseNum <= end; verseNum += 1) {
+    const verseData = getCurrentVerseData(verseNum);
+    const row = verseArea.querySelector(`.verse-row[data-vnum="${verseNum}"]`);
+    if (!verseData || !row || selectedVerses.some(v => v.ref === verseData.ref)) continue;
+    selectedVerses.push(verseData);
+    row.classList.add('selected');
+    changed = true;
+  }
+
+  if (changed) syncBibleActionRows();
+  updateSelectionBar();
+  return changed;
+}
+
 verseArea.addEventListener('click', e => {
   const target = e.target instanceof Element ? e.target : null;
   if (!target) return;
@@ -1352,6 +1473,12 @@ verseArea.addEventListener('click', e => {
 
   const verseData = getCurrentVerseData(parseInt(row.dataset.vnum));
   if (!verseData) return;
+
+  if (e.shiftKey && activeActionVerseNum != null) {
+    selectVerseRange(activeActionVerseNum, verseData.verse);
+    setActiveBibleVerse(verseData.verse);
+    return;
+  }
 
   const isSelected = row.classList.contains('selected');
   if (!isSelected) {
@@ -1378,6 +1505,56 @@ verseArea.addEventListener('click', e => {
   }
 
   setActiveBibleVerse(verseData.verse);
+});
+
+verseArea.addEventListener('dblclick', e => {
+  if (appMode !== 'bible') return;
+  const row = e.target instanceof Element ? e.target.closest('.verse-row') : null;
+  if (!row) return;
+  if (startVerseActionFromRow(row)) {
+    suppressVerseTapUntil = Date.now() + 450;
+  }
+});
+
+verseArea.addEventListener('mousedown', e => {
+  if (appMode !== 'bible' || e.button !== 0) return;
+  const row = e.target instanceof Element ? e.target.closest('.verse-row') : null;
+  if (!row) return;
+
+  if (verseMousePressCleanup) verseMousePressCleanup();
+
+  const startX = e.clientX;
+  const startY = e.clientY;
+
+  const clearPress = () => {
+    clearTimeout(timer);
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onEnd);
+    window.removeEventListener('blur', onEnd);
+    if (verseMousePressCleanup === clearPress) verseMousePressCleanup = null;
+  };
+
+  const onMove = evt => {
+    if (Math.abs(evt.clientX - startX) > 10 || Math.abs(evt.clientY - startY) > 10) {
+      clearPress();
+    }
+  };
+
+  const onEnd = () => {
+    clearPress();
+  };
+
+  const timer = setTimeout(() => {
+    if (startVerseActionFromRow(row)) {
+      suppressVerseTapUntil = Date.now() + 450;
+    }
+    clearPress();
+  }, 380);
+
+  verseMousePressCleanup = clearPress;
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onEnd);
+  window.addEventListener('blur', onEnd);
 });
 
 verseArea.addEventListener('touchstart', e => {
@@ -1412,12 +1589,10 @@ verseArea.addEventListener('touchstart', e => {
   };
 
   const timer = setTimeout(() => {
-    const verseData = getCurrentVerseData(parseInt(row.dataset.vnum));
-    if (!verseData) {
+    if (!startVerseActionFromRow(row)) {
       clearPress();
       return;
     }
-    startVerseActionMode(verseData, row);
     suppressVerseTapUntil = Date.now() + 450;
     triggerHaptic([14, 22, 14]);
     clearPress();
@@ -1434,6 +1609,8 @@ verseArea.addEventListener('contextmenu', e => {
   const row = e.target instanceof Element ? e.target.closest('.verse-row') : null;
   if (!row) return;
   e.preventDefault();
+  startVerseActionFromRow(row);
+  suppressVerseTapUntil = Date.now() + 450;
 });
 
 verseArea.addEventListener('selectstart', e => {
@@ -1518,6 +1695,7 @@ function parseReference(query) {
 }
 
 async function openBibleLocation(book, chapter) {
+  Voice.stopScripture();
   appMode = 'bible';
   updateNavState();
   activeTestament = book.testament;
@@ -1836,7 +2014,10 @@ async function doSearch() {
         <div class="result-item" data-idx="${idx}">
           <div class="result-item-header">
             <div class="result-ref">${escHtml(refLabel)}</div>
-            <button class="add-btn" data-idx="${idx}" title="Add to a Study Stack">+</button>
+            <div class="result-actions">
+              ${Voice.isSupported ? `<button class="result-play-btn" data-idx="${idx}" title="Listen" aria-label="Listen to this verse">▶</button>` : ''}
+              <button class="add-btn" data-idx="${idx}" title="Add to a Study Stack">+</button>
+            </div>
           </div>
           <div class="result-text">${escHtml(v.text)}</div>
         </div>
@@ -1868,6 +2049,14 @@ async function doSearch() {
           verse: v.verse,
           text: v.text
         }, btn.closest('.result-item'), btn);
+      });
+    });
+
+    searchResults.querySelectorAll('.result-play-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const v = data[parseInt(btn.dataset.idx)];
+        Voice.playScripture([{ ref: `${v.book_name} ${v.chapter}:${v.verse}`, text: v.text }]);
       });
     });
   } finally {
@@ -1912,7 +2101,7 @@ document.addEventListener('keydown', e => {
   if (e.target === searchInput) return;
   if (!greekPage.classList.contains('hidden')) return;
   if (!activeBook || !activeChapter) return;
-  const maxChapter = chapterBar.querySelectorAll('.chapter-btn').length;
+  const maxChapter = Number(chapterBar.dataset.totalChapters || bookChapterCounts.get(activeBook.id) || activeChapter);
   if (e.key === 'ArrowRight') {
     if (activeChapter < maxChapter) {
       selectChapter(activeChapter + 1);
@@ -2295,6 +2484,7 @@ async function handleSignOut() {
 
 // ── Mode toggle ───────────────────────────────────────
 function setMode(mode) {
+  if (appMode !== mode) Voice.stopScripture();
   const alreadyActive = appMode === mode;
   const persisted = readSavedScrollState();
   const currentState = captureScrollState({ immediate: true });
@@ -2399,6 +2589,7 @@ function renderStacksList() {
 function openStack(id) {
   if (activeStackId !== id) {
     clearStackCompareMode();
+    Voice.stopScripture();
   }
   activeStackId = id;
   resetChromeScroll(stacksContent, stacksPane);
@@ -2434,7 +2625,7 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
   `;
 
   if (stack.verses.length === 0) {
-    html += `<div class="state-msg stack-empty-state"><strong>No saved cards yet.</strong>Long-press verses in the Bible reader to add them here, then expand each card with notes or comparison tools.</div>`;
+    html += `<div class="state-msg stack-empty-state"><strong>No saved cards yet.</strong>Long-press or right-click verses in the Bible reader to add them here, then expand each card with notes or comparison tools.</div>`;
   } else {
     stack.verses.forEach((v, idx) => {
       const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
@@ -2487,6 +2678,12 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
               </svg>
               <span class="stack-action-label">Compare</span>
             </button>
+            ${Voice.isSupported ? `<button class="listen-card-btn" data-idx="${idx}" title="Listen to this card">
+              <svg class="stack-action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M6 4.5 15 10l-9 5.5z" fill="currentColor"/>
+              </svg>
+              <span class="stack-action-label">Listen</span>
+            </button>` : ''}
             <button class="card-translation-btn" data-idx="${idx}" title="Switch translation">${TRANSLATIONS[cardTranslations.get(idx) || 'kjv']}</button>
           </div>
           <div class="add-passage-area hidden">
@@ -2536,6 +2733,17 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
       const area = btn.closest('.stack-verse-card').querySelector('.add-passage-area');
       area.classList.toggle('hidden');
       if (!area.classList.contains('hidden')) area.querySelector('.add-passage-input').focus();
+    });
+  });
+
+  stackDetail.querySelectorAll('.listen-card-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.stack-verse-card');
+      const items = Array.from(card.querySelectorAll('.stack-verse-row')).map(row => ({
+        ref: row.dataset.passageRef,
+        text: row.querySelector('.stack-verse-text')?.textContent || '',
+      })).filter(it => it.text.trim());
+      if (items.length) Voice.playScripture(items);
     });
   });
 
@@ -3104,9 +3312,10 @@ function updateSelectionBar() {
         <span class="sel-count">${selectedVerses.length} verse${selectedVerses.length !== 1 ? 's' : ''} selected</span>
         <button class="sel-done-btn" title="Done">Done</button>
       </div>
-      <div class="sel-actions">
-        <button class="sel-secondary-btn" ${hasGreek ? '' : 'disabled'}>Greek</button>
-        <button class="sel-secondary-btn" ${activeVerse ? '' : 'disabled'}>Compare</button>
+      <div class="sel-actions${Voice.isSupported ? ' sel-actions-4' : ''}">
+        <button class="sel-secondary-btn sel-greek-btn" ${hasGreek ? '' : 'disabled'}>Greek</button>
+        <button class="sel-secondary-btn sel-compare-btn" ${activeVerse ? '' : 'disabled'}>Compare</button>
+        ${Voice.isSupported ? '<button class="sel-secondary-btn sel-play-btn">Play</button>' : ''}
         <button class="sel-add-btn">Add to Stack</button>
       </div>
     `;
@@ -3119,12 +3328,12 @@ function updateSelectionBar() {
       e.stopPropagation();
       openStackPicker();
     });
-    bar.querySelectorAll('.sel-secondary-btn')[0].addEventListener('click', e => {
+    bar.querySelector('.sel-greek-btn').addEventListener('click', e => {
       e.stopPropagation();
       if (!activeVerse || !hasGreek) return;
       showGreekPage(activeVerse.verse, activeVerse.text, greekByVerse[activeVerse.verse] ?? []);
     });
-    bar.querySelectorAll('.sel-secondary-btn')[1].addEventListener('click', e => {
+    bar.querySelector('.sel-compare-btn').addEventListener('click', e => {
       e.stopPropagation();
       if (selectedVerses.length > 1) {
         openCompareSelectedVerses(selectedVerses);
@@ -3132,6 +3341,13 @@ function updateSelectionBar() {
       }
       if (!activeVerse) return;
       openCompare(`${activeVerse.book} ${activeVerse.chapter}:${activeVerse.verse}`, activeBook.id, activeVerse.chapter, activeVerse.verse);
+    });
+    bar.querySelector('.sel-play-btn')?.addEventListener('click', e => {
+      e.stopPropagation();
+      const items = [...selectedVerses]
+        .sort((a, b) => (a.chapter - b.chapter) || (a.verse - b.verse))
+        .map(v => ({ ref: v.ref, text: v.text, vnum: (v.book === activeBook?.name && v.chapter === activeChapter) ? v.verse : undefined }));
+      if (items.length) Voice.playScripture(items);
     });
     return;
   }

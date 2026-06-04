@@ -351,6 +351,17 @@ body::before {
   color: var(--text); letter-spacing: -1.3px;
   margin-bottom: 4px; line-height: 1.05;
 }
+.book-title-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-block;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.book-title-btn:active { opacity: 0.72; }
 
 .reader-meta {
   display: flex; flex-wrap: wrap; gap: 8px;
@@ -596,19 +607,25 @@ body::before {
   display: flex; flex-direction: column;
   padding: 0;
 }
+.book-item-wrap {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
 .book-item {
   width: 100%;
   padding: 14px 16px;
   background: var(--bg);
   border: none;
-  border-bottom: 1px solid var(--border);
   border-radius: 0;
   color: var(--text);
   font-size: 0.98rem;
   font-weight: 500;
   cursor: pointer;
   text-align: left;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
   transition: background 0.12s;
 }
 .book-item:active { background: var(--surface); }
@@ -623,6 +640,45 @@ body::before {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.2;
+}
+.book-item-caret {
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.book-chapter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+  gap: 14px 16px;
+  padding: 8px 16px 20px;
+}
+.book-chapter-btn {
+  width: 58px;
+  aspect-ratio: 1;
+  justify-self: center;
+  border-radius: 999px;
+  border: 1px solid rgba(16,16,20,0.07);
+  background: rgba(255,255,255,0.92);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(10,10,12,0.04);
+}
+.book-chapter-btn.active {
+  background: #0d0d0f;
+  color: #fff;
+  border-color: #0d0d0f;
+  box-shadow: 0 14px 26px rgba(10,10,12,0.16);
+}
+.book-chapter-btn:active { transform: scale(0.96); }
+.book-chapter-loading {
+  grid-column: 1 / -1;
+  padding: 12px 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
 }
 .book-empty {
   padding: 28px 18px;
@@ -1424,7 +1480,7 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   flex-wrap: wrap;
   align-items: center;
 }
-.add-passage-btn, .note-toggle, .compare-card-btn {
+.add-passage-btn, .note-toggle, .compare-card-btn, .listen-card-btn {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -1446,7 +1502,7 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   box-shadow: none;
   transition: transform 0.15s, background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
-.add-passage-btn:active, .note-toggle:active, .compare-card-btn:active {
+.add-passage-btn:active, .note-toggle:active, .compare-card-btn:active, .listen-card-btn:active {
   transform: scale(0.96);
   background: var(--surface2);
   border-color: rgba(16,16,20,0.07);
@@ -1767,6 +1823,108 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   cursor: pointer; padding: 0 6px; transition: opacity 0.12s;
 }
 .sel-clear-btn:active { opacity: 1; }
+
+/* ── Voice Mode player ──────────────────── */
+/* Dark in both themes, mirroring .selection-bar. */
+.voice-bar {
+  position: fixed;
+  bottom: calc(var(--nav-h) + 12px);
+  left: 50%;
+  transform: translateX(-50%) translateY(calc(100% + 56px));
+  width: min(520px, calc(100vw - 24px));
+  background: rgba(13,13,15,0.94); color: #fff;
+  border-radius: 22px; padding: 12px;
+  z-index: 850;
+  box-shadow: 0 18px 48px rgba(0,0,0,0.28);
+  transition: transform 0.38s cubic-bezier(0.32, 0.72, 0.18, 1);
+  will-change: transform; pointer-events: none;
+}
+.voice-bar.open { transform: translateX(-50%) translateY(0); pointer-events: auto; }
+.voice-main { display: flex; align-items: center; gap: 8px; }
+.voice-btn {
+  flex: none; width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+  color: #fff; border-radius: 14px; font-size: 1.05rem; line-height: 1;
+  cursor: pointer; transition: background 0.12s, border-color 0.12s;
+}
+.voice-btn:active { background: rgba(255,255,255,0.2); }
+.voice-toggle {
+  background: var(--accent); border-color: transparent;
+  width: 50px; height: 50px; font-size: 1.2rem;
+}
+.voice-toggle:active { background: var(--accent-h); }
+.voice-label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 0 4px; overflow: hidden; }
+.voice-ref { font-size: 0.9rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-sub { font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
+.voice-bar.tray-open .voice-tray-toggle { background: rgba(255,255,255,0.2); }
+.voice-tray { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.voice-tray-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.voice-tray-label { font-size: 0.82rem; font-weight: 600; opacity: 0.85; }
+.voice-stepper { display: flex; align-items: center; gap: 6px; }
+.voice-step {
+  width: 38px; height: 38px; border-radius: 12px;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+  color: #fff; font-size: 1.1rem; line-height: 1; cursor: pointer;
+}
+.voice-step:active { background: rgba(255,255,255,0.2); }
+.voice-rate-val, .voice-delay-val {
+  min-width: 48px; text-align: center; font-size: 0.85rem; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.voice-select {
+  flex: 1 1 auto; min-width: 0; max-width: 62%;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+  color: #fff; border-radius: 12px; padding: 10px;
+  font-family: var(--font-ui); font-size: 0.82rem;
+}
+.voice-select option { color: #000; }
+.voice-repeat-group { display: flex; gap: 6px; }
+.voice-repeat-btn {
+  padding: 9px 13px; border-radius: 12px;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+  color: #fff; font-family: var(--font-ui); font-size: 0.8rem; font-weight: 700; cursor: pointer;
+}
+.voice-repeat-btn.active { background: var(--accent); border-color: transparent; }
+/* Lift the selection / compare bars above the player while it is open. */
+body.voice-active .selection-bar { bottom: calc(var(--nav-h) + 92px); }
+/* Now-playing verse highlight (reuses the selection palette). */
+.verse-row.verse-speaking {
+  background: #fdeced !important; border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+body.theme-dark .verse-row.verse-speaking {
+  background: #2b191e !important; box-shadow: inset 3px 0 0 var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-bar { transition: none; }
+  .verse-row.verse-speaking { scroll-behavior: auto; }
+}
+
+/* Verse-action bar: 2x2 grid when the Play button is present. */
+.sel-actions.sel-actions-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* Search-result Listen button (sits beside the + add button). */
+.result-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.result-play-btn {
+  background: var(--surface); border: none; color: var(--accent);
+  width: 28px; height: 28px; border-radius: 8px;
+  font-size: 0.78rem; line-height: 1; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s;
+}
+.result-play-btn:active { background: var(--surface2); }
+
+/* Chapter "Listen" pill in the reader hero. */
+.reader-play-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 999px; padding: 8px 14px;
+  font-family: var(--font-ui); font-size: 0.72rem; font-weight: 800;
+  letter-spacing: 0.4px; cursor: pointer; transition: background 0.12s;
+}
+.reader-play-btn svg { width: 14px; height: 14px; }
+.reader-play-btn:active { background: var(--accent-h); }
 
 /* ── Translation picker ──────────────────── */
 .translation-picker {
@@ -2268,6 +2426,9 @@ body.theme-dark .top-translation,
 body.theme-dark .icon-btn,
 body.theme-dark .secondary-pill-btn,
 body.theme-dark .chapter-btn,
+body.theme-dark .book-item-wrap,
+body.theme-dark .book-item,
+body.theme-dark .book-chapter-btn,
 body.theme-dark .reader-meta-pill,
 body.theme-dark .summary-meta-pill,
 body.theme-dark .stack-add-input,
@@ -2275,6 +2436,11 @@ body.theme-dark .delete-stack-btn,
 body.theme-dark .remove-verse-btn {
   background: rgba(28,28,34,0.9);
   border-color: rgba(255,255,255,0.08);
+}
+body.theme-dark .book-chapter-btn.active {
+  background: #f5f1ec;
+  color: #111114;
+  border-color: #f5f1ec;
 }
 body.theme-dark .scripture-card {
   background: rgba(20,20,24,0.98);
@@ -2303,6 +2469,7 @@ body.theme-dark .verse-row.selected {
 body.theme-dark .add-passage-btn,
 body.theme-dark .note-toggle,
 body.theme-dark .compare-card-btn,
+body.theme-dark .listen-card-btn,
 body.theme-dark .card-translation-btn {
   background: linear-gradient(180deg, rgba(31,31,38,0.96), rgba(24,24,30,0.96));
   border-color: rgba(255,255,255,0.06);
@@ -2311,6 +2478,7 @@ body.theme-dark .card-translation-btn {
 body.theme-dark .add-passage-btn:active,
 body.theme-dark .note-toggle:active,
 body.theme-dark .compare-card-btn:active,
+body.theme-dark .listen-card-btn:active,
 body.theme-dark .card-translation-btn:active {
   background: linear-gradient(180deg, rgba(40,40,47,0.98), rgba(30,30,36,0.98));
   border-color: rgba(255,255,255,0.1);
