@@ -24,6 +24,29 @@ const RATE_MIN = 0.5, RATE_MAX = 2.0, RATE_STEP = 0.1;
 const DELAY_STEP = 500, DELAY_MAX = 10000;     // repeat delay, ms
 const HEARTBEAT_MS = 12000;                    // keep long utterances alive
 
+const KOKORO_WORKER_URL = './kokoro-worker.js?v=2';
+const KOKORO_DEFAULT_VOICE = 'af_heart';
+const KOKORO_VOICE_PREFIX = 'kokoro:';
+const KOKORO_LOAD_TIMEOUT_MS = 25000;
+const KOKORO_GENERATE_TIMEOUT_MS = 15000;
+const KOKORO_RETRY_COOLDOWN_MS = 120000;
+const KOKORO_VOICES = [
+  { id: 'af_heart', label: 'Kokoro Heart (US female, A)' },
+  { id: 'af_bella', label: 'Kokoro Bella (US female, A-)' },
+  { id: 'af_nicole', label: 'Kokoro Nicole (US female, B-)' },
+  { id: 'af_aoede', label: 'Kokoro Aoede (US female, C+)' },
+  { id: 'af_kore', label: 'Kokoro Kore (US female, C+)' },
+  { id: 'af_nova', label: 'Kokoro Nova (US female, C)' },
+  { id: 'af_sarah', label: 'Kokoro Sarah (US female, C+)' },
+  { id: 'am_fenrir', label: 'Kokoro Fenrir (US male, C+)' },
+  { id: 'am_michael', label: 'Kokoro Michael (US male, C+)' },
+  { id: 'am_puck', label: 'Kokoro Puck (US male, C+)' },
+  { id: 'bf_emma', label: 'Kokoro Emma (UK female, B-)' },
+  { id: 'bf_isabella', label: 'Kokoro Isabella (UK female, C)' },
+  { id: 'bm_fable', label: 'Kokoro Fable (UK male, C)' },
+  { id: 'bm_george', label: 'Kokoro George (UK male, C)' },
+];
+
 const DEFAULT_VOICE_SETTINGS = {
   voiceId: '',          // '' = system default
   rate: 1.0,
@@ -66,9 +89,12 @@ function buzz(ms = 12) {
 class WebSpeechProvider {
   constructor() {
     this.name = 'webspeech';
+    this.defaultVoiceLabel = 'Automatic (best available)';
+    this.needsHeartbeat = true;
     this.synth = (typeof window !== 'undefined') ? window.speechSynthesis : null;
     this._voices = [];
     this._ready = false;
+    this._preferred = null;
     if (this.synth) {
       this._loadVoices();
       // Voice list is populated asynchronously on Chrome / iOS Safari.
@@ -83,7 +109,7 @@ class WebSpeechProvider {
   _loadVoices() {
     if (!this.synth) return;
     const list = this.synth.getVoices();
-    if (list && list.length) { this._voices = list; this._ready = true; }
+    if (list && list.length) { this._voices = list; this._ready = true; this._preferred = null; }
   }
 
   async getVoices() {
@@ -101,18 +127,56 @@ class WebSpeechProvider {
         });
       }
     }
-    return this._voices.map(v => ({
-      id: this._idOf(v),
-      label: `${v.name}${v.lang ? ' (' + v.lang + ')' : ''}`,
-      lang: v.lang,
-      isDefault: !!v.default,
-    }));
+    return this._voices
+      .slice()
+      .sort((a, b) => this._score(b) - this._score(a))   // best voices first
+      .map(v => ({
+        id: this._idOf(v),
+        label: `${v.name}${v.lang ? ' (' + v.lang + ')' : ''}`,
+        lang: v.lang,
+        isDefault: !!v.default,
+      }));
   }
 
   _idOf(v) { return v.voiceURI || `${v.name}::${v.lang}`; }
   _resolve(voiceId) {
-    if (!voiceId) return null;
-    return this._voices.find(v => this._idOf(v) === voiceId) || null;
+    if (voiceId) {
+      const found = this._voices.find(v => this._idOf(v) === voiceId);
+      if (found) return found;
+    }
+    return this._pickPreferred();   // '' or unknown id → best available voice
+  }
+
+  // The platform "default" voice is often a low-quality / novelty one
+  // (e.g. macOS "Albert"). Pick the best available English voice so Voice
+  // Mode sounds decent out of the box; the user can still override.
+  _pickPreferred() {
+    const voices = this._voices;
+    if (!voices.length) return null;
+    if (this._preferred && voices.includes(this._preferred)) return this._preferred;
+    let best = null, bestScore = -Infinity;
+    for (const v of voices) { const sc = this._score(v); if (sc > bestScore) { bestScore = sc; best = v; } }
+    this._preferred = best;
+    return best;
+  }
+
+  // Higher = better quality / more natural. Used to auto-pick the default
+  // voice and to sort the voice list (best first) in the player.
+  _score(v) {
+    const name = v.name || '';
+    const lang = (v.lang || '').toLowerCase();
+    let s = 0;
+    if (lang.startsWith('en')) s += 100;
+    if (lang === 'en-us') s += 25;
+    if (/\b(premium|enhanced|neural|natural)\b/i.test(name)) s += 70;   // downloadable HQ voices
+    if (/google (us|uk) english/i.test(name)) s += 55;                  // Chrome
+    if (/microsoft.*(aria|jenny|guy|sonia|natural)/i.test(name)) s += 60;
+    if (/\b(samantha|ava|allison|aaron|evan|nathan|joelle|zoe|serena|karen|daniel|moira|tessa|fiona|siri)\b/i.test(name)) s += 45;
+    // demote the old robotic / novelty macOS voices
+    if (/\b(albert|fred|junior|ralph|kathy|princess|bad news|good news|bahh|bells|boing|bubbles|cellos|deranged|hysterical|jester|organ|superstar|trinoids|whisper|wobble|zarvox)\b/i.test(name)) s -= 300;
+    if (v.localService) s += 8;
+    if (v.default) s += 4;
+    return s;
   }
 
   // Speak one chunk. Resolves on natural end; resolves('canceled') on
@@ -148,6 +212,385 @@ class WebSpeechProvider {
   cancel() { try { this.synth && this.synth.cancel(); } catch {} }
 }
 
+// ── Provider: Kokoro.js (free, local model) + Web Speech fallback ────────
+class KokoroProvider {
+  constructor(fallback) {
+    this.name = 'kokoro';
+    this.defaultVoiceLabel = 'Automatic (system voice)';
+    this.needsHeartbeat = false;
+    this.fallback = fallback;
+    this._fallbackUntil = 0;
+    this._worker = null;
+    this._workerJobs = new Map();
+    this._workerJobId = 0;
+    this._workerReady = false;
+    this._job = null;
+    this._currentAudio = null;
+    this._currentSource = null;
+    this._currentUrl = null;
+    this._paused = false;
+  }
+
+  isSupported() {
+    return this._canPlayAudio() || !!this.fallback?.isSupported();
+  }
+
+  _canPlayAudio() {
+    return typeof window !== 'undefined'
+      && typeof Audio === 'function'
+      && typeof Blob === 'function'
+      && !!window.URL?.createObjectURL;
+  }
+
+  async getVoices() {
+    const kokoro = this._canPlayAudio()
+      ? KOKORO_VOICES.map(v => ({
+          id: `${KOKORO_VOICE_PREFIX}${v.id}`,
+          label: v.label,
+          lang: v.id.startsWith('b') ? 'en-GB' : 'en-US',
+          isDefault: v.id === KOKORO_DEFAULT_VOICE,
+        }))
+      : [];
+
+    let system = [];
+    try {
+      const fallbackVoices = await this.fallback?.getVoices?.() || [];
+      const englishVoices = fallbackVoices.filter(v => (v.lang || '').toLowerCase().startsWith('en'));
+      system = (englishVoices.length ? englishVoices : fallbackVoices).map(v => ({
+        ...v,
+        label: `System: ${v.label}`,
+      }));
+    } catch {}
+    return kokoro.concat(system);
+  }
+
+  speakChunk(text, { voiceId, rate, onStatus } = {}) {
+    if (!this._shouldUseKokoro(voiceId)) {
+      if (!voiceId) this._warmKokoro();
+      return this._speakWithFallback(text, { voiceId, rate });
+    }
+    if (!this._canPlayAudio()) {
+      return this._speakWithFallback(text, { voiceId: '', rate });
+    }
+    if (!this._workerReady && Date.now() < this._fallbackUntil) {
+      this._warmKokoro();
+      return this._speakFallbackChunk(text, {
+        rate,
+        onStatus,
+        label: 'Kokoro still loading; using system voice...',
+      });
+    }
+
+    this.needsHeartbeat = false;
+    const job = { canceled: false, fallbackSpeech: null, stopPlayback: null, resumeWaiter: null };
+    this._cancelJob(this._job);
+    this._job = job;
+    this._paused = false;
+    const reportLoadStatus = label => {
+      if (!this._isCanceled(job)) onStatus?.(label);
+    };
+
+    const promise = (async () => {
+      let generation = null;
+      try {
+        onStatus?.(this._workerReady ? 'Generating Kokoro audio...' : 'Loading Kokoro voice model...');
+        await this._unlockAudio();
+        generation = this._generateInWorker(text, {
+          voice: this._voiceName(voiceId),
+          speed: clampRate(rate),
+          onStatus: reportLoadStatus,
+        });
+        const audio = await this._withTimeout(
+          generation.promise,
+          this._workerReady ? KOKORO_GENERATE_TIMEOUT_MS : KOKORO_LOAD_TIMEOUT_MS,
+          this._workerReady ? 'Kokoro generation is still running' : 'Kokoro model is still loading'
+        );
+        if (this._isCanceled(job)) return 'canceled';
+
+        onStatus?.('');
+        return await this._playSamples(audio.samples, audio.samplingRate, job);
+      } catch (err) {
+        generation?.cancel?.();
+        this._cleanupAudio();
+        if (this._isCanceled(job)) return 'canceled';
+        if (err?.code === 'kokoro-timeout') this._fallbackUntil = Date.now() + KOKORO_RETRY_COOLDOWN_MS;
+        try { console.warn('Kokoro TTS failed; falling back to system voice.', err); } catch {}
+        if (this.fallback?.isSupported()) {
+          onStatus?.(err?.code === 'kokoro-timeout' ? 'Kokoro still loading; using system voice...' : 'Using system voice...');
+          job.fallbackSpeech = this.fallback.speakChunk(text, { voiceId: '', rate });
+          return await job.fallbackSpeech.promise;
+        }
+        throw err;
+      } finally {
+        if (this._job === job) this._job = null;
+        onStatus?.('');
+      }
+    })();
+
+    return { promise, cancel: () => this._cancelJob(job) };
+  }
+
+  _shouldUseKokoro(voiceId) {
+    return String(voiceId || '').startsWith(KOKORO_VOICE_PREFIX);
+  }
+
+  _warmKokoro() {
+    if (this._workerReady || Date.now() < this._fallbackUntil || !this._canPlayAudio()) return;
+    try {
+      this._getWorker().postMessage({ type: 'warm' });
+    } catch {
+      this._fallbackUntil = Date.now() + KOKORO_RETRY_COOLDOWN_MS;
+    }
+  }
+
+  _voiceName(voiceId) {
+    const id = String(voiceId || '').replace(KOKORO_VOICE_PREFIX, '');
+    return KOKORO_VOICES.some(v => v.id === id) ? id : KOKORO_DEFAULT_VOICE;
+  }
+
+  _getWorker() {
+    if (this._worker) return this._worker;
+    if (typeof Worker !== 'function') throw new Error('Kokoro worker unavailable');
+
+    const worker = new Worker(KOKORO_WORKER_URL, { type: 'module' });
+    worker.addEventListener('message', event => {
+      const msg = event.data || {};
+      if (msg.type === 'ready') {
+        this._workerReady = true;
+        return;
+      }
+
+      const job = this._workerJobs.get(msg.id);
+      if (!job) return;
+
+      if (msg.type === 'status') {
+        job.onStatus?.(msg.label || '');
+      } else if (msg.type === 'result') {
+        this._workerReady = true;
+        this._workerJobs.delete(msg.id);
+        job.resolve({
+          samples: new Float32Array(msg.audio),
+          samplingRate: msg.samplingRate || 24000,
+        });
+      } else if (msg.type === 'error') {
+        this._workerJobs.delete(msg.id);
+        job.reject(new Error(msg.message || 'Kokoro worker error'));
+      }
+    });
+    worker.addEventListener('error', event => {
+      const err = new Error(event.message || 'Kokoro worker error');
+      for (const [, job] of this._workerJobs) job.reject(err);
+      this._workerJobs.clear();
+      this._worker = null;
+      this._workerReady = false;
+    });
+    this._worker = worker;
+    return worker;
+  }
+
+  _generateInWorker(text, { voice, speed, onStatus } = {}) {
+    const worker = this._getWorker();
+    const id = ++this._workerJobId;
+    const promise = new Promise((resolve, reject) => {
+      this._workerJobs.set(id, { resolve, reject, onStatus });
+    });
+    worker.postMessage({ type: 'generate', id, text, voice, speed });
+    return {
+      promise,
+      cancel: () => this._workerJobs.delete(id),
+    };
+  }
+
+  _withTimeout(promise, ms, message) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error(message);
+        err.code = 'kokoro-timeout';
+        reject(err);
+      }, ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
+  async _unlockAudio() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      this._audioCtx = this._audioCtx || new Ctx();
+      if (this._audioCtx.state === 'suspended') await this._audioCtx.resume();
+    } catch {}
+  }
+
+  _playSamples(samples, samplingRate, job) {
+    if (!samples || !samples.length) return Promise.reject(new Error('Kokoro returned no audio'));
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const ctx = this._audioCtx;
+      if (!ctx) { reject(new Error('AudioContext unavailable')); return; }
+
+      const finish = (value, error) => {
+        if (settled) return;
+        settled = true;
+        try { source.onended = null; } catch {}
+        if (this._currentSource === source) this._currentSource = null;
+        if (error) reject(error); else resolve(value);
+      };
+
+      let source = null;
+      try {
+        const buffer = ctx.createBuffer(1, samples.length, samplingRate || 24000);
+        buffer.copyToChannel(samples, 0);
+        source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        this._currentSource = source;
+        source.onended = () => finish('end');
+        job.stopPlayback = () => {
+          try { source.stop(); } catch {}
+          finish('canceled');
+        };
+      } catch (err) {
+        finish(null, err);
+        return;
+      }
+
+      (async () => {
+        try {
+          if (this._paused) await this._waitForResume(job);
+          if (this._isCanceled(job)) { finish('canceled'); return; }
+          if (ctx.state === 'suspended') await ctx.resume();
+          source.start();
+        } catch (err) {
+          finish(null, err);
+        }
+      })();
+    });
+  }
+
+  _playRawAudio(rawAudio, job) {
+    const blob = rawAudio?.toBlob ? rawAudio.toBlob() : null;
+    if (!blob) return Promise.reject(new Error('Kokoro returned no audio'));
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      this._currentAudio = audio;
+      this._currentUrl = url;
+
+      const finish = (value, error) => {
+        if (settled) return;
+        settled = true;
+        audio.removeEventListener('ended', onEnded);
+        audio.removeEventListener('error', onError);
+        if (this._currentAudio === audio) this._cleanupAudio();
+        if (error) reject(error); else resolve(value);
+      };
+      const onEnded = () => finish('end');
+      const onError = () => finish(null, new Error('audio playback error'));
+      job.stopPlayback = () => finish('canceled');
+
+      audio.preload = 'auto';
+      audio.addEventListener('ended', onEnded);
+      audio.addEventListener('error', onError);
+
+      (async () => {
+        try {
+          if (this._paused) await this._waitForResume(job);
+          if (this._isCanceled(job)) { finish('canceled'); return; }
+          await audio.play();
+        } catch (err) {
+          finish(null, err);
+        }
+      })();
+    });
+  }
+
+  _waitForResume(job) {
+    if (!this._paused || this._isCanceled(job)) return Promise.resolve();
+    return new Promise(resolve => { job.resumeWaiter = resolve; });
+  }
+
+  _resolveResume(job = this._job) {
+    if (!job?.resumeWaiter) return;
+    const resolve = job.resumeWaiter;
+    job.resumeWaiter = null;
+    resolve();
+  }
+
+  _speakWithFallback(text, { voiceId, rate } = {}) {
+    this.needsHeartbeat = this.fallback?.needsHeartbeat !== false;
+    if (this.fallback?.isSupported()) return this.fallback.speakChunk(text, { voiceId, rate });
+    return { promise: Promise.reject(new Error('no TTS provider available')), cancel() {} };
+  }
+
+  _speakFallbackChunk(text, { voiceId = '', rate, onStatus, label = 'Using system voice...' } = {}) {
+    const speech = this._speakWithFallback(text, { voiceId, rate });
+    const promise = (async () => {
+      try {
+        onStatus?.(label);
+        return await speech.promise;
+      } finally {
+        onStatus?.('');
+      }
+    })();
+    return { promise, cancel: () => speech.cancel?.() };
+  }
+
+  _isCanceled(job) {
+    return !job || job.canceled || this._job !== job;
+  }
+
+  _cancelJob(job = this._job) {
+    if (!job) return;
+    job.canceled = true;
+    this._resolveResume(job);
+    try { job.fallbackSpeech?.cancel?.(); } catch {}
+    try { job.stopPlayback?.(); } catch {}
+    if (this._job === job) this._job = null;
+  }
+
+  _cleanupAudio() {
+    const audio = this._currentAudio;
+    const source = this._currentSource;
+    const url = this._currentUrl;
+    this._currentAudio = null;
+    this._currentSource = null;
+    this._currentUrl = null;
+    try { audio?.pause(); } catch {}
+    try { source?.stop?.(); } catch {}
+    try { if (audio) audio.src = ''; } catch {}
+    try { if (url) URL.revokeObjectURL(url); } catch {}
+  }
+
+  pause() {
+    this._paused = true;
+    try { this._currentAudio?.pause(); } catch {}
+    try { if (this._currentSource && this._audioCtx?.state === 'running') this._audioCtx.suspend(); } catch {}
+    try { this.fallback?.pause?.(); } catch {}
+  }
+
+  resume() {
+    this._paused = false;
+    this._resolveResume();
+    try {
+      const play = this._currentAudio?.play?.();
+      play?.catch?.(() => {});
+    } catch {}
+    try { if (this._currentSource && this._audioCtx?.state === 'suspended') this._audioCtx.resume(); } catch {}
+    try { this.fallback?.resume?.(); } catch {}
+  }
+
+  cancel() {
+    this._cancelJob();
+    this._cleanupAudio();
+    this._paused = false;
+    try { this.fallback?.cancel?.(); } catch {}
+  }
+}
+
 // ── Engine: queue + repeat + delay + state (provider-agnostic) ───────────
 class VoiceEngine {
   constructor(provider) {
@@ -155,6 +598,7 @@ class VoiceEngine {
     this.playlist = [];
     this.index = 0;
     this.state = 'idle';        // idle | playing | paused
+    this.statusLabel = '';
     this.token = 0;             // bumped on every stop / new play; guards stale async
     this.settings = loadVoiceSettings();
     this.callbacks = {};
@@ -173,6 +617,7 @@ class VoiceEngine {
   // ── timers ──
   _startHeartbeat() {
     this._stopHeartbeat();
+    if (this.provider.needsHeartbeat === false) return;
     // Chrome/iOS cut speech after ~15s; an imperceptible pause+resume keeps
     // it alive. Gated on state so it never fights a user-initiated pause.
     this._heartbeat = setInterval(() => {
@@ -206,6 +651,7 @@ class VoiceEngine {
     this.index = i;
     const item = this.playlist[i];
     if (!item) { this._finish(); return; }
+    this.statusLabel = '';
 
     try { this.callbacks.onItemStart?.(item, i, this); } catch {}
     this._emitState();
@@ -213,12 +659,18 @@ class VoiceEngine {
     const { promise } = this.provider.speakChunk(item.text, {
       voiceId: this.settings.voiceId,
       rate: this.settings.rate,
+      onStatus: label => {
+        if (myToken !== this.token) return;
+        this.statusLabel = label || '';
+        this._emitState();
+      },
     });
     this._startHeartbeat();
 
     const settle = (errored) => {
       if (myToken !== this.token) return;    // stale: stopped or restarted
       this._stopHeartbeat();
+      this.statusLabel = '';
       if (errored) {
         // Skip past an occasional error, but guard against a tight error
         // loop (e.g. broken synthesis while in Verse repeat).
@@ -319,6 +771,7 @@ class VoiceEngine {
     this.token++;
     this._clearDelay();
     this._stopHeartbeat();
+    this.statusLabel = '';
     this._pausedInDelay = false;
     this._endedWhilePaused = false;
     this.provider.cancel();
@@ -328,6 +781,7 @@ class VoiceEngine {
     this.token++;
     this._clearDelay();
     this._stopHeartbeat();
+    this.statusLabel = '';
     this._pausedInDelay = false;
     this.state = 'idle';
     this.provider.cancel();
@@ -445,8 +899,9 @@ class VoicePlayer {
     const sel = this._$('.voice-select');
     if (!sel) return;
     const current = this.engine.settings.voiceId;
+    const automaticLabel = this.engine.provider.defaultVoiceLabel || 'Automatic (best available)';
     sel.innerHTML =
-      `<option value="">System default</option>` +
+      `<option value="">${escapeHtml(automaticLabel)}</option>` +
       voices.map(v => `<option value="${escapeAttr(v.id)}">${escapeHtml(v.label)}</option>`).join('');
     sel.value = current || '';
   }
@@ -461,7 +916,7 @@ class VoicePlayer {
 
     const item = eng.playlist[eng.index];
     this._$('.voice-ref').textContent = item ? item.ref : '';
-    this._$('.voice-sub').textContent = eng.playlist.length > 1 ? `${eng.index + 1} / ${eng.playlist.length}` : '';
+    this._$('.voice-sub').textContent = eng.statusLabel || (eng.playlist.length > 1 ? `${eng.index + 1} / ${eng.playlist.length}` : '');
 
     const toggle = this._$('.voice-toggle');
     if (eng.state === 'paused') {
@@ -490,7 +945,7 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ── Singleton wiring ─────────────────────────────────────────────────────
-const provider = new WebSpeechProvider();
+const provider = new KokoroProvider(new WebSpeechProvider());
 const engine = new VoiceEngine(provider);
 let player = null;
 

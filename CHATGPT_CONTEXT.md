@@ -118,7 +118,7 @@ Current headline capabilities:
 - Greek word study overlay for NT passages when Greek tables exist
 - reader settings for font, size, spacing, and light/dark theme
 - mobile chrome hide/show based on scroll direction
-- **Scripture Voice Mode**: free on-device text-to-speech that reads a verse, a multi-verse selection, a whole chapter, or a Stack card aloud, with a floating player (play/pause/resume/stop, prev/next, speed, system-voice picker, repeat verse/passage, repeat delay) — see Section 78
+- **Scripture Voice Mode**: free on-device text-to-speech that reads a verse, a multi-verse selection, a whole chapter, or a Stack card aloud, with a floating player (play/pause/resume/stop, prev/next, speed, system-voice picker plus experimental Kokoro voices, repeat verse/passage, repeat delay) — see Section 78
 
 ## 4. Current Tracked File Map
 
@@ -126,7 +126,8 @@ Current headline capabilities:
 
 - `index.html`: all visible app markup and modal/sheet containers
 - `app.js`: application logic, event handling, state, search, stacks, auth, compare, settings (imports `voice.js`)
-- `voice.js`: Scripture Voice Mode subsystem — Web Speech (`speechSynthesis`) text-to-speech with a provider abstraction, the floating audio player, and playback state (see Section 78)
+- `voice.js`: Scripture Voice Mode subsystem — Web Speech (`speechSynthesis`) default text-to-speech with experimental Kokoro.js voices, a provider abstraction, the floating audio player, and playback state (see Section 78)
+- `kokoro-worker.js`: experimental Kokoro.js worker for model loading/generation; current user testing has not produced audible Kokoro output
 - `style.css`: full styling system
 - `config.js`: Supabase URL and anon key
 - `sw.js`: service worker with network-first caching
@@ -274,7 +275,7 @@ The frontend relies on:
 
 `sw.js` defines:
 
-- cache name: currently `scripture-v95`
+- cache name: currently `scripture-v101`
 - `install`: `skipWaiting()`
 - `activate`: delete old caches and claim clients
 - `fetch`: network-first, then fallback to cache on failure
@@ -1500,7 +1501,7 @@ There is a batch of **uncommitted local work** in the tree (not yet pushed; the 
 - **`style.css`** — new components for the book expansion UI (`.book-item-wrap`, `.book-item-caret`, `.book-chapter-grid`, `.book-chapter-btn`, `.book-chapter-loading`) plus dark-theme variants
 - **`manifest.json`** — `start_url`/`scope` changed from `/Scripture-app/` to relative `./`
 - **`package.json`** — added `start`/`dev` scripts pointing at `server.js`
-- **`index.html` + `sw.js`** — cache-buster bumps for the above (currently `style.css?v=96`, `app.js?v=88`, `sw.js` `CACHE = 'scripture-v95'`)
+- **`index.html` + `sw.js`** — cache-buster bumps for the above and Voice Mode work (currently `style.css?v=101`, `app.js?v=94`, `sw.js` `CACHE = 'scripture-v101'`)
 - **`CODEX_HANDOFF.md`** — updated with the above
 
 See `CODEX_HANDOFF.md` for the authoritative, always-current version/credential/deploy state.
@@ -1712,17 +1713,17 @@ When the two disagree on a fast-moving fact (e.g. a version number), trust `CODE
 
 ## 78. Scripture Voice Mode
 
-Lets the user **listen** to scripture instead of only reading it. Free and on-device — it uses the browser **Web Speech API** (`window.speechSynthesis`), with no ElevenLabs/OpenAI/external voice service.
+Lets the user **listen** to scripture instead of only reading it. Free and on-device — the automatic default uses the browser **Web Speech API** (`window.speechSynthesis`) for instant playback. **Kokoro.js** (`onnx-community/Kokoro-82M-v1.0-ONNX`, loaded from jsDelivr) exists as an experimental explicit voice option, but user testing failed: the user selected `Kokoro Heart`, waited about 10 minutes at `Generating Kokoro audio...`, and never heard audio. There is no ElevenLabs/OpenAI/external paid voice service.
 
 ### What the user can do
 - Play a single verse, a multi-verse selection, an entire chapter, or a Stack card.
 - Pause, resume, stop; skip to previous/next verse.
 - Adjust reading speed (0.5×–2.0×).
-- Pick from the device's available system voices.
+- Pick from the device's available English system voices. Kokoro voices are still visible in the picker, but should be treated as experimental/non-working until fixed or removed.
 - Repeat a single verse, repeat the whole passage, and set a delay between repetitions.
 
 ### Where the controls appear
-A **Play/Listen affordance** is added in four places, all feature-gated on `speechSynthesis` support (hidden entirely on unsupported browsers):
+A **Play/Listen affordance** is added in four places, all feature-gated on `Voice.isSupported`:
 1. Verse action mode — a `Play` button in the selection bar (the action grid becomes 2×2).
 2. Search results — a small ▶ button beside each result's `+`.
 3. Stack cards — a `Listen` button alongside Add/Note/Compare (it reads the text currently shown, so a card's translation override is honored).
@@ -1732,7 +1733,7 @@ Playback is driven from a **floating player** (`#voice-bar`) styled like the exi
 
 ### Architecture (`voice.js`)
 A dedicated, self-contained ES module imported by `app.js`. It deliberately keeps voice logic out of `app.js`:
-- **Provider abstraction (the swap seam).** `WebSpeechProvider` implements `isSupported / getVoices / speakChunk / pause / resume / cancel`. A future `ElevenLabsProvider` or `OpenAIProvider` implements the same interface and is swapped in with a one-line change — **no UI rewrite**. (Paid keys must not ship client-side; they'd be proxied via `server.js` or a Supabase Edge Function.)
+- **Provider abstraction (the swap seam).** `KokoroProvider` wraps the voice system and exposes Kokoro voices, but `Automatic` routes to `WebSpeechProvider` for instant system TTS. When a Kokoro voice is selected, it uses `kokoro-worker.js` to dynamically import `kokoro-js@1.2.1/dist/kokoro.web.js`, load `onnx-community/Kokoro-82M-v1.0-ONNX` with WASM/q8, generate one verse audio buffer per chunk off the UI thread, and play it through an already-unlocked `AudioContext`. This Kokoro path has **not produced audible playback for the user** and should be considered experimental/failed. A future `ElevenLabsProvider` or `OpenAIProvider` can implement the same `isSupported / getVoices / speakChunk / pause / resume / cancel` interface — **no UI rewrite**. (Paid keys must not ship client-side; they'd be proxied via `server.js` or a Supabase Edge Function.)
 - **`VoiceEngine`** (provider-agnostic): playlist, repeat modes (`none | verse | passage`), repeat delay, and a state machine (`idle | playing | paused`). It speaks one utterance per verse so the current verse can be highlighted and the long-utterance cutoff bug is avoided.
 - **`VoicePlayer`**: owns the single persistent `#voice-bar` DOM (built once, handlers bound once) and `voice_settings` in localStorage.
 - `app.js` only adds the Play buttons, supplies a verse-highlight callback via `initVoice(...)`, and calls `Voice.stopScripture()` when the user navigates away (chapter change, mode switch, opening a different stack, translation change).
@@ -1740,11 +1741,14 @@ A dedicated, self-contained ES module imported by `app.js`. It deliberately keep
 ### Robustness details worth knowing
 - A **session token** (bumped on every stop/new-play) makes stale async speech callbacks no-op — prevents double-advance and stuck states.
 - An **error-streak guard** stops a tight loop if synthesis errors while in Verse repeat.
-- A `pause()/resume()` **heartbeat** keeps long utterances alive (Chrome/iOS ~15s cutoff) and is always cleared on stop/pause/end (no leaked timers).
+- A `pause()/resume()` **heartbeat** keeps Web Speech utterances alive (Chrome/iOS ~15s cutoff) and is disabled for Kokoro audio so it does not stutter generated playback.
 - Handles **iOS flaky `pause()`**: if an utterance finishes during a pause, resume advances rather than hanging.
 
 ### Known limitations
-- iOS pauses TTS when the screen locks / tab is backgrounded (platform constraint, not fixable client-side).
+- Kokoro first use downloads the model in-browser and may take noticeable time, especially on phone.
+- Kokoro load has a timeout/fallback path: after 25s it uses the system voice for that chunk, keeps the model warming in the background, and retries Kokoro after the cooldown or once the model is ready.
+- Real-user Kokoro test failed on laptop: explicit `Kokoro Heart` sat on `Generating Kokoro audio...` for about 10 minutes and never played. Do not assume Kokoro works just because the code path exists.
+- iOS pauses TTS/audio when the screen locks / tab is backgrounded (platform constraint, not fixable client-side).
 - Changing speed/voice applies to the **next** utterance, not the one currently playing.
 - "Repeat indefinitely" is realized as Verse/Passage looping until Stop (no fixed-count repeat).
 

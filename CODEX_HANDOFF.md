@@ -3,48 +3,78 @@
 ## Current Status
 
 - Repo branch: `main`
-- **Uncommitted changes present** — not yet pushed (see below)
-- Current cache/version values in staging:
-  - `sw.js`: `const CACHE = 'scripture-v96'` (was v95)
-  - `index.html`: `app.js?v=89` (was v88)
-  - `index.html`: `style.css?v=97` (was v96)
-  - `app.js` line 2: `import … from './voice.js?v=1'` — **4th cache-buster anchor** (new). `voice.js` is an ES module imported by app.js; its version lives in this import specifier, not index.html. Bump it whenever `voice.js` changes (and bump app.js's `?v=` too, since app.js text changes with it).
-- Recent pushed commits on `main`:
+- **Local commit `a2011a7` exists but is NOT pushed.** It bundles Voice Mode + the book-sheet/dev-server work (they share files, so they couldn't be split). User chose "commit locally only."
+- **Plus further uncommitted changes on top of `a2011a7`** — Voice Mode quality work, including Web Speech auto-pick improvements and a Kokoro.js experiment. Nothing pushed; user tests on localhost + phone/laptop.
+- **Important current reality:** the Kokoro experiment is **not working for the user**. User selected `Kokoro Heart` on laptop, waited about 10 minutes on `Generating Kokoro audio...`, and never heard audio. Do not present Kokoro as solved or ask the user to keep waiting. Treat Kokoro as experimental/failed in this app unless explicitly asked to debug it further.
+- Current cache/version values in working tree:
+  - `sw.js`: `const CACHE = 'scripture-v101'`
+  - `index.html`: `app.js?v=94`
+  - `index.html`: `style.css?v=101`
+  - `app.js` line 2: `import … from './voice.js?v=6'` — **4th cache-buster anchor**. `voice.js` is an ES module imported by app.js; its version lives in this import specifier, not index.html. Bump it whenever `voice.js` changes (and bump app.js's `?v=` too, since app.js text changes with it). See memory `feedback_cache_busters.md`.
+- Last pushed commit on `main` (everything below predates Voice Mode):
   - `2726213` `Let strong semantic matches outrank shallow keyword hits`
   - `ef93a8e` `Allow smaller embedding upload batches`
   - `7338b4f` `Rank semantic search across translations`
-  - `8f770be` `Support translation-specific verse embeddings`
-  - `9ad598f` `Fetch phrase fragments for search candidates`
-  - `424439c` `Boost phrase-aware search ranking`
-  - `4555ef1` `Improve mobile search header layout`
-  - `7f46988` `Fix semantic search vector RPC input`
+
+> **To deploy Voice Mode to the phone:** push `main` (this sends `a2011a7` + whatever is committed after it) → GitHub Pages → clear cache on device. Confirm with the user before pushing (the commit bundles two features).
 
 ---
 
-## Scripture Voice Mode (new — uncommitted)
+## Scripture Voice Mode (committed locally in `a2011a7`; quality work uncommitted on top)
 
-Hands-free, on-device text-to-speech for verses, selections, whole chapters, and Stack cards using the browser **Web Speech API** (`speechSynthesis`). 100% free — no ElevenLabs/OpenAI/external voice API. Architected so a paid provider can be swapped in later without touching the UI.
+Hands-free, on-device text-to-speech for verses, selections, whole chapters, and Stack cards. The automatic default is now the browser **Web Speech API** (`speechSynthesis`) for instant playback. **Kokoro.js** (`onnx-community/Kokoro-82M-v1.0-ONNX` via jsDelivr, WASM/q8 first pass) is still present as explicit voices in the picker, but the real-user test failed: it stalled on generation and produced no audible output. Architected so a paid provider can still be swapped in later without touching the UI.
 
 ### Files
 - **New `voice.js`** — the whole subsystem (dedicated module, imported by app.js):
-  - `WebSpeechProvider` — the swap seam. Interface: `isSupported()`, `getVoices()`, `speakChunk(text,{voiceId,rate}) -> {promise,cancel}`, `pause()/resume()/cancel()`. A future `ElevenLabsProvider`/`OpenAIProvider` implements the same shape; swap one line, no UI changes.
+  - `KokoroProvider` — experimental wrapper. `Automatic` routes to Web Speech/system voice. Explicit Kokoro voices route through `kokoro-worker.js`, which dynamically imports `kokoro-js@1.2.1/dist/kokoro.web.js`, loads `onnx-community/Kokoro-82M-v1.0-ONNX` with WASM/q8, generates one verse audio buffer per chunk, and plays via an already-unlocked `AudioContext`. This path is currently **not validated** and failed for the user.
+  - `WebSpeechProvider` — fallback provider and system voice picker. Interface: `isSupported()`, `getVoices()`, `speakChunk(text,{voiceId,rate}) -> {promise,cancel}`, `pause()/resume()/cancel()`. A future `ElevenLabsProvider`/`OpenAIProvider` implements the same shape; swap one line, no UI changes.
   - `VoiceEngine` — provider-agnostic playlist + repeat (`none|verse|passage`) + repeat-delay + state machine (`idle|playing|paused`). Uses a **session token** (bumped on every stop/new-play) so stale async callbacks no-op; an **error-streak guard** prevents a tight loop if synthesis errors during Verse repeat; a `pause()/resume()` **heartbeat** keeps long utterances alive (Chrome/iOS ~15s cutoff) and is cleared on stop/pause/end; handles iOS flaky-pause (utterance ending mid-pause → resume advances instead of hanging).
   - `VoicePlayer` — a single persistent `#voice-bar` floating player (built once, handlers bound once → no listener/DOM leaks). Transport (⏮ ⏯ ⏹ ⏭) + chevron tray (speed stepper, voice `<select>`, repeat pills, delay stepper).
   - Persists `voice_settings` in localStorage (`{voiceId, rate, repeatMode, repeatDelayMs}`).
   - Exports `Voice` singleton + `initVoice({onItemStart,onStateChange})`.
 - **`app.js`** — integration only (no voice logic): imports `Voice`/`initVoice`; `initVoice` wires the verse-highlight callback; **all Play UI is feature-gated on `Voice.isSupported`**. Play affordances added in 4 places: verse-action bar (`updateSelectionBar`), search results (`doSearch`), stack cards (`renderStackView`), chapter hero (`renderVerses`, "Listen" pill). `Voice.stopScripture()` called on navigation: `selectChapter`, `openBibleLocation`, `setMode` (mode change), `openStack` (different stack); translation change funnels through `selectChapter`, so it's covered.
+- **`kokoro-worker.js`** — experimental Web Worker for Kokoro model loading/generation. Added after main-thread generation appeared to freeze on `Generating Kokoro audio...`; still did not produce confirmed audible output for the user.
 - **`style.css`** — `.voice-bar` block (dark in both themes, mirrors `.selection-bar`) + tray controls; `.verse-speaking` now-playing highlight (reuses selection palette, dark variant); `.sel-actions-4` (verse-action 2×2 grid); `.result-play-btn`/`.result-actions`; `.reader-play-btn`; `.listen-card-btn` folded into the existing card-action selector groups (light + dark). Respects `prefers-reduced-motion`.
 
 ### Verification done (this session)
-`node --check` (both JS files) ✓; headless Chrome boot — `#voice-bar` + all controls created, app boots ✓; Node engine-logic harness 12/12 (no-repeat, verse/passage repeat, stop, blank-skip, pause/resume incl. ended-while-paused, settings persistence + rate clamp) ✓. **Audio itself must be verified on-device (iPhone PWA)** — voices, native select, safe-area position, haptics.
+`node --check` (`voice.js`, `app.js`, `kokoro-worker.js`) ✓ after Kokoro worker integration. Previous pre-Kokoro checks: headless Chrome boot — `#voice-bar` + all controls created, app boots ✓; Node engine-logic harness 12/12 (no-repeat, verse/passage repeat, stop, blank-skip, pause/resume incl. ended-while-paused, settings persistence + rate clamp) ✓. **Real-user Kokoro audio test failed**: user waited ~10 minutes on laptop at `Generating Kokoro audio...` for `Kokoro Heart` and never heard playback.
 
 ### Known limitations
-- iOS pauses TTS when the screen locks / tab backgrounds (platform constraint).
-- Rate/voice changes apply to the **next** utterance, not the in-flight one (Web Speech can't retune a live utterance).
+- Kokoro first use downloads the model in-browser and may take noticeable time, especially on phone.
+- iOS pauses TTS/audio when the screen locks / tab backgrounds (platform constraint).
+- Rate/voice changes apply to the **next** utterance, not the in-flight one.
 - "Repeat indefinitely" is realized as Verse/Passage looping until Stop (no fixed-count repeat was requested).
+- Kokoro should be considered non-working UX for now. It may work as a model in other environments, but in this app/browser path it has not reached audible playback for the user.
 
-### Future ElevenLabs/OpenAI path
-Implement a provider with the same interface (`speakChunk` fetches audio → plays via `Audio`/`AudioContext`). **Do NOT embed a paid key client-side** — proxy via `server.js` or a Supabase Edge Function. See the comment at the provider seam in `voice.js`.
+### Voice quality — current state (uncommitted, on top of `a2011a7`)
+The user's first reaction was that the default voice "sounds disgusting." Root cause: the browser was using the OS default voice, and the user's Mac has **only the basic/novelty voices installed (no Premium/Enhanced)** — best available is "Samantha."
+
+**Already done (uncommitted, in `voice.js`):**
+- `WebSpeechProvider` now **auto-picks the best installed English voice** instead of the platform default — added `_score(v)` (boosts en-US, Premium/Enhanced/Neural, Google/Microsoft/known-good names; heavily demotes novelty voices like Albert/Zarvox) and `_pickPreferred()`. `_resolve('')` now returns the preferred voice, not `null`.
+- The player's voice list is **sorted best-first**, and the empty option is relabeled "Automatic (best available)".
+- Net effect: it now uses Samantha by default on this Mac (much better than the novelty default), and will auto-use any Enhanced voice the user downloads.
+- `KokoroProvider` wraps the voice system, but `Automatic` now routes to system TTS (`Automatic (system voice)`) for immediate playback. Kokoro voices remain available explicitly in the existing voice picker, with English system fallback voices labeled `System: ...`.
+- Kokoro loading/generation now runs in `kokoro-worker.js` instead of the main UI thread. This prevents the tray from freezing on "Generating Kokoro audio..." and lets the main-thread timeout actually fire.
+- If Kokoro import/model load/generation/audio playback fails, it falls back to Web Speech for that chunk instead of leaving playback dead.
+- Kokoro load now has a 25s timeout and generation has a 15s timeout. On timeout it uses the system voice and keeps the Kokoro model promise warming in the background; subsequent attempts use system voice immediately for a 2-minute cooldown unless Kokoro finishes loading.
+- Automatic system playback also warms Kokoro quietly in the background when possible, so users can try a Kokoro voice later without making the default Play button hang.
+- Status text now distinguishes loading code, downloading model, downloading percentage, generating audio, and system fallback instead of sitting on "Preparing Kokoro voice...".
+- Kokoro is currently forced through WASM/q8 for a smaller first mobile test. WebGPU can be tested later if quality is good but latency is too high.
+- **Result after all of the above:** still no audible Kokoro output in the user's test. The user is frustrated and explicitly asked why they have not heard it once. Do not keep iterating on Kokoro unless the user asks. The pragmatic next choices are: keep Web Speech/system voice only, or implement a cloud TTS provider behind the same seam.
+
+**The user is still unhappy with Web Speech quality and asked for better options. Research done (June 2026) — provider options for the swap seam:**
+
+| Option | Sound | ~Cost/chapter (~4k chars) | Free/month | Setup |
+|---|---|---|---|---|
+| **Kokoro 82M** (open-source, in-browser via Transformers.js) | Very good (#1 free, TTS-Arena Elo ~1056) | **$0** | Unlimited | **No key**; ~80 MB one-time model download |
+| Enhanced system voices | OK | $0 | Unlimited | user downloads in OS settings |
+| Google Neural2 | Great | ~$0.06 | ~250 ch free | cloud, key + proxy |
+| OpenAI tts-1 / 4o-mini-tts | Great | ~$0.06 | $5 trial only | cloud, key + proxy |
+| Azure Neural | Great | ~$0.06 | ~125 ch free | cloud, key + proxy |
+| Cartesia Sonic | Great, fast | ~$0.14 | ~5 ch once | cloud, key + proxy |
+| ElevenLabs v2/v3 | Best | ~$0.44–0.88 | ~2–3 ch | cloud, key + proxy |
+
+**Kokoro path was chosen for first trial and effectively failed for this app UX.** Recommended next step: stop presenting Kokoro as the answer. Either remove/hide Kokoro voices and keep improved Web Speech, or implement a cloud TTS provider. For any **cloud/paid** provider: `speakChunk` fetches audio → plays via `Audio`/`AudioContext`, and the API key MUST be server-side (proxy via `server.js` or a Supabase Edge Function), never in the browser.
 
 ---
 
@@ -268,7 +298,8 @@ Scripts gitignored (contain hardcoded secrets): `import.js`, `import-greek.js`, 
 /
 ├── index.html              # App shell, all UI markup
 ├── app.js                  # All frontend logic (imports voice.js)
-├── voice.js                # Scripture Voice Mode subsystem (Web Speech TTS, swappable provider)
+├── voice.js                # Scripture Voice Mode subsystem (Web Speech default + experimental Kokoro)
+├── kokoro-worker.js        # Experimental Kokoro worker; user has not heard successful output
 ├── style.css               # All styles
 ├── config.js               # Supabase URL + anon key
 ├── sw.js                   # Service worker (network-first caching)
