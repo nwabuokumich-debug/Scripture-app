@@ -24,12 +24,12 @@ const RATE_MIN = 0.5, RATE_MAX = 2.0, RATE_STEP = 0.1;
 const DELAY_STEP = 500, DELAY_MAX = 10000;     // repeat delay, ms
 const HEARTBEAT_MS = 12000;                    // keep long utterances alive
 
-const KOKORO_WORKER_URL = './kokoro-worker.js?v=2';
+const KOKORO_WORKER_URL = './kokoro-worker.js?v=4';
 const KOKORO_DEFAULT_VOICE = 'af_heart';
 const KOKORO_VOICE_PREFIX = 'kokoro:';
-const KOKORO_LOAD_TIMEOUT_MS = 25000;
-const KOKORO_GENERATE_TIMEOUT_MS = 15000;
-const KOKORO_RETRY_COOLDOWN_MS = 120000;
+const KOKORO_WARM_WATCHDOG_MS = 300000;     // give a cold model load up to 5 min before declaring failure
+const KOKORO_GENERATE_TIMEOUT_MS = 60000;   // per-verse synth safety once the model is ready
+const KOKORO_RETRY_COOLDOWN_MS = 120000;    // after a HARD load error, wait before retrying
 const KOKORO_VOICES = [
   { id: 'af_heart', label: 'Kokoro Heart (US female, A)' },
   { id: 'af_bella', label: 'Kokoro Bella (US female, A-)' },
@@ -219,11 +219,16 @@ class KokoroProvider {
     this.defaultVoiceLabel = 'Automatic (system voice)';
     this.needsHeartbeat = false;
     this.fallback = fallback;
-    this._fallbackUntil = 0;
     this._worker = null;
     this._workerJobs = new Map();
     this._workerJobId = 0;
     this._workerReady = false;
+    this._loadState = 'idle';        // idle | loading | ready | error
+    this._loadLabel = '';            // latest download/progress label
+    this._errorCooldownUntil = 0;    // only after a HARD load error
+    this._warmWatchdog = null;
+    this._audioCache = new Map();    // key -> { samples, samplingRate } (prefetch)
+    this._inflight = new Map();      // key -> Promise (dedupe generation)
     this._job = null;
     this._currentAudio = null;
     this._currentSource = null;
@@ -265,58 +270,54 @@ class KokoroProvider {
   }
 
   speakChunk(text, { voiceId, rate, onStatus } = {}) {
+    // A non-Kokoro selection ('' = system default) goes straight to Web Speech.
     if (!this._shouldUseKokoro(voiceId)) {
-      if (!voiceId) this._warmKokoro();
       return this._speakWithFallback(text, { voiceId, rate });
     }
     if (!this._canPlayAudio()) {
-      return this._speakWithFallback(text, { voiceId: '', rate });
-    }
-    if (!this._workerReady && Date.now() < this._fallbackUntil) {
-      this._warmKokoro();
-      return this._speakFallbackChunk(text, {
-        rate,
-        onStatus,
-        label: 'Kokoro still loading; using system voice...',
-      });
+      return this._speakFallbackChunk(text, { rate, onStatus, label: 'Using system voice...' });
     }
 
+    // Kokoro selected but the model isn't ready: read THIS verse with the
+    // system voice while the model keeps downloading in the background. No
+    // blocking timeout and no cooldown — the next verse picks up Kokoro once
+    // it's ready. (Hard load failures show a clear "unavailable" message.)
+    if (!this._workerReady) {
+      this._warmKokoro();
+      const label = this._loadState === 'error'
+        ? 'Kokoro unavailable — using system voice'
+        : (this._loadLabel || 'Loading Kokoro voice…');
+      return this._speakFallbackChunk(text, { rate, onStatus, label });
+    }
+
+    // Model is ready → synthesize with Kokoro (served from the prefetch cache
+    // when available, so chapter playback is gapless).
     this.needsHeartbeat = false;
     const job = { canceled: false, fallbackSpeech: null, stopPlayback: null, resumeWaiter: null };
     this._cancelJob(this._job);
     this._job = job;
     this._paused = false;
-    const reportLoadStatus = label => {
-      if (!this._isCanceled(job)) onStatus?.(label);
-    };
 
     const promise = (async () => {
-      let generation = null;
       try {
-        onStatus?.(this._workerReady ? 'Generating Kokoro audio...' : 'Loading Kokoro voice model...');
         await this._unlockAudio();
-        generation = this._generateInWorker(text, {
-          voice: this._voiceName(voiceId),
-          speed: clampRate(rate),
-          onStatus: reportLoadStatus,
-        });
+        const cached = this._audioCache.get(this._genKey(voiceId, rate, text));
+        if (!cached) onStatus?.('Generating Kokoro audio…');
         const audio = await this._withTimeout(
-          generation.promise,
-          this._workerReady ? KOKORO_GENERATE_TIMEOUT_MS : KOKORO_LOAD_TIMEOUT_MS,
-          this._workerReady ? 'Kokoro generation is still running' : 'Kokoro model is still loading'
+          this._ensureGenerated(text, { voiceId, rate }),
+          KOKORO_GENERATE_TIMEOUT_MS,
+          'Kokoro generation timed out'
         );
         if (this._isCanceled(job)) return 'canceled';
-
         onStatus?.('');
         return await this._playSamples(audio.samples, audio.samplingRate, job);
       } catch (err) {
-        generation?.cancel?.();
         this._cleanupAudio();
         if (this._isCanceled(job)) return 'canceled';
-        if (err?.code === 'kokoro-timeout') this._fallbackUntil = Date.now() + KOKORO_RETRY_COOLDOWN_MS;
-        try { console.warn('Kokoro TTS failed; falling back to system voice.', err); } catch {}
+        try { console.warn('Kokoro generation failed; using system voice for this verse.', err); } catch {}
+        // Fall back for THIS verse only — keep Kokoro enabled for the next one.
         if (this.fallback?.isSupported()) {
-          onStatus?.(err?.code === 'kokoro-timeout' ? 'Kokoro still loading; using system voice...' : 'Using system voice...');
+          onStatus?.('Using system voice...');
           job.fallbackSpeech = this.fallback.speakChunk(text, { voiceId: '', rate });
           return await job.fallbackSpeech.promise;
         }
@@ -330,17 +331,80 @@ class KokoroProvider {
     return { promise, cancel: () => this._cancelJob(job) };
   }
 
+  // Generate (or reuse) Kokoro audio for a chunk, de-duped and cached so a
+  // prefetched verse plays instantly. Returns { samples, samplingRate }.
+  _genKey(voiceId, rate, text) {
+    return `${this._voiceName(voiceId)}|${clampRate(rate)}|${text}`;
+  }
+  _ensureGenerated(text, { voiceId, rate } = {}) {
+    const key = this._genKey(voiceId, rate, text);
+    const cached = this._audioCache.get(key);
+    if (cached) return Promise.resolve(cached);
+    const pending = this._inflight.get(key);
+    if (pending) return pending;
+    const p = (async () => {
+      const gen = this._generateInWorker(text, { voice: this._voiceName(voiceId), speed: clampRate(rate) });
+      const audio = await gen.promise;
+      // Keep a small bounded cache (the current + a few prefetched verses).
+      this._audioCache.set(key, audio);
+      while (this._audioCache.size > 4) {
+        this._audioCache.delete(this._audioCache.keys().next().value);
+      }
+      return audio;
+    })();
+    this._inflight.set(key, p);
+    p.finally(() => { if (this._inflight.get(key) === p) this._inflight.delete(key); }).catch(() => {});
+    return p;
+  }
+
+  // Called by the engine for the upcoming verse so it's ready before we need it.
+  prefetch(text, { voiceId, rate } = {}) {
+    if (!this._shouldUseKokoro(voiceId) || !this._workerReady || !this._canPlayAudio()) return;
+    if (!text || !text.trim()) return;
+    this._ensureGenerated(text, { voiceId, rate }).catch(() => {});
+  }
+
   _shouldUseKokoro(voiceId) {
     return String(voiceId || '').startsWith(KOKORO_VOICE_PREFIX);
   }
 
+  // Start loading the model in the background (idempotent). Loading is never
+  // gated by a per-utterance timeout — only a generous watchdog guards a true
+  // hang, after which we degrade cleanly to the system voice.
   _warmKokoro() {
-    if (this._workerReady || Date.now() < this._fallbackUntil || !this._canPlayAudio()) return;
+    if (this._workerReady || this._loadState === 'loading' || !this._canPlayAudio()) return;
+    if (this._loadState === 'error' && Date.now() < this._errorCooldownUntil) return;
+    this._loadState = 'loading';
+    this._loadLabel = 'Loading Kokoro voice…';
     try {
       this._getWorker().postMessage({ type: 'warm' });
+      this._armWarmWatchdog();
     } catch {
-      this._fallbackUntil = Date.now() + KOKORO_RETRY_COOLDOWN_MS;
+      this._markLoadError();
     }
+  }
+
+  _armWarmWatchdog() {
+    if (this._warmWatchdog) clearTimeout(this._warmWatchdog);
+    this._warmWatchdog = setTimeout(() => {
+      if (!this._workerReady) this._markLoadError();
+    }, KOKORO_WARM_WATCHDOG_MS);
+  }
+
+  _markLoadError() {
+    this._loadState = 'error';
+    this._loadLabel = '';
+    this._errorCooldownUntil = Date.now() + KOKORO_RETRY_COOLDOWN_MS;
+    if (this._warmWatchdog) { clearTimeout(this._warmWatchdog); this._warmWatchdog = null; }
+    // Drop the worker so a retry after the cooldown starts fresh.
+    try { this._worker?.terminate?.(); } catch {}
+    this._worker = null;
+    this._workerJobs.clear();
+  }
+
+  // Called when the user selects a voice — warm Kokoro ahead of the first play.
+  onVoiceSelected(voiceId) {
+    if (this._shouldUseKokoro(voiceId)) this._warmKokoro();
   }
 
   _voiceName(voiceId) {
@@ -357,6 +421,16 @@ class KokoroProvider {
       const msg = event.data || {};
       if (msg.type === 'ready') {
         this._workerReady = true;
+        this._loadState = 'ready';
+        this._loadLabel = '';
+        if (this._warmWatchdog) { clearTimeout(this._warmWatchdog); this._warmWatchdog = null; }
+        return;
+      }
+
+      // Background-load messages carry id === null (no per-job owner).
+      if (msg.id == null) {
+        if (msg.type === 'status') this._loadLabel = msg.label || '';
+        else if (msg.type === 'error') this._markLoadError();
         return;
       }
 
@@ -367,6 +441,8 @@ class KokoroProvider {
         job.onStatus?.(msg.label || '');
       } else if (msg.type === 'result') {
         this._workerReady = true;
+        this._loadState = 'ready';
+        if (this._warmWatchdog) { clearTimeout(this._warmWatchdog); this._warmWatchdog = null; }
         this._workerJobs.delete(msg.id);
         job.resolve({
           samples: new Float32Array(msg.audio),
@@ -377,12 +453,11 @@ class KokoroProvider {
         job.reject(new Error(msg.message || 'Kokoro worker error'));
       }
     });
-    worker.addEventListener('error', event => {
-      const err = new Error(event.message || 'Kokoro worker error');
+    worker.addEventListener('error', () => {
+      const err = new Error('Kokoro worker error');
       for (const [, job] of this._workerJobs) job.reject(err);
       this._workerJobs.clear();
-      this._worker = null;
-      this._workerReady = false;
+      this._markLoadError();
     });
     this._worker = worker;
     return worker;
@@ -667,6 +742,12 @@ class VoiceEngine {
     });
     this._startHeartbeat();
 
+    // Prefetch the next verse's audio so Kokoro playback is gapless.
+    const nextItem = this.playlist[i + 1];
+    if (nextItem && this.provider.prefetch) {
+      try { this.provider.prefetch(nextItem.text, { voiceId: this.settings.voiceId, rate: this.settings.rate }); } catch {}
+    }
+
     const settle = (errored) => {
       if (myToken !== this.token) return;    // stale: stopped or restarted
       this._stopHeartbeat();
@@ -790,7 +871,7 @@ class VoiceEngine {
 
   // ── settings (apply to subsequent utterances) ──
   setPlaybackRate(rate) { this.settings.rate = clampRate(rate); saveVoiceSettings(this.settings); this._emitState(); }
-  setVoice(voiceId)     { this.settings.voiceId = voiceId || ''; saveVoiceSettings(this.settings); this._emitState(); }
+  setVoice(voiceId)     { this.settings.voiceId = voiceId || ''; saveVoiceSettings(this.settings); try { this.provider.onVoiceSelected?.(this.settings.voiceId); } catch {} this._emitState(); }
   setRepeatMode(mode)   { this.settings.repeatMode = mode; saveVoiceSettings(this.settings); this._emitState(); }
   setRepeatDelay(ms)    { this.settings.repeatDelayMs = Math.min(DELAY_MAX, Math.max(0, ms | 0)); saveVoiceSettings(this.settings); this._emitState(); }
 }
@@ -813,44 +894,54 @@ class VoicePlayer {
     el.setAttribute('aria-label', 'Scripture audio player');
     el.setAttribute('aria-hidden', 'true');
     el.innerHTML = `
-      <div class="voice-main">
-        <button class="voice-btn voice-prev" type="button" aria-label="Previous verse">⏮</button>
-        <button class="voice-btn voice-toggle" type="button" aria-label="Pause" aria-pressed="true">⏸</button>
-        <button class="voice-btn voice-stop" type="button" aria-label="Stop">⏹</button>
-        <button class="voice-btn voice-next" type="button" aria-label="Next verse">⏭</button>
-        <div class="voice-label" aria-live="polite">
-          <span class="voice-ref"></span>
-          <span class="voice-sub"></span>
+      <div class="voice-compact">
+        <button class="voice-btn voice-compact-toggle" type="button" aria-label="Pause" aria-pressed="true">⏸</button>
+        <div class="voice-compact-label" aria-live="polite">
+          <span class="voice-compact-ref"></span>
+          <span class="voice-compact-sub"></span>
         </div>
-        <button class="voice-btn voice-tray-toggle" type="button" aria-label="Playback options" aria-expanded="false">⚙</button>
+        <button class="voice-btn voice-expand-toggle" type="button" aria-label="Expand player" aria-expanded="false">▲</button>
       </div>
-      <div class="voice-tray" hidden>
-        <div class="voice-tray-row">
-          <span class="voice-tray-label">Speed</span>
-          <div class="voice-stepper">
-            <button class="voice-step voice-rate-down" type="button" aria-label="Slower">−</button>
-            <span class="voice-rate-val">1.0×</span>
-            <button class="voice-step voice-rate-up" type="button" aria-label="Faster">+</button>
+      <div class="voice-expanded" hidden>
+        <div class="voice-main">
+          <button class="voice-btn voice-prev" type="button" aria-label="Previous verse">⏮</button>
+          <button class="voice-btn voice-toggle" type="button" aria-label="Pause" aria-pressed="true">⏸</button>
+          <button class="voice-btn voice-stop" type="button" aria-label="Stop">⏹</button>
+          <button class="voice-btn voice-next" type="button" aria-label="Next verse">⏭</button>
+          <div class="voice-label" aria-live="polite">
+            <span class="voice-ref"></span>
+            <span class="voice-sub"></span>
           </div>
+          <button class="voice-btn voice-tray-toggle" type="button" aria-label="Playback options" aria-expanded="false">⚙</button>
         </div>
-        <div class="voice-tray-row">
-          <span class="voice-tray-label">Voice</span>
-          <select class="voice-select" aria-label="Reading voice"></select>
-        </div>
-        <div class="voice-tray-row">
-          <span class="voice-tray-label">Repeat</span>
-          <div class="voice-repeat-group" role="group" aria-label="Repeat mode">
-            <button class="voice-repeat-btn" data-mode="none" type="button" aria-pressed="true">Off</button>
-            <button class="voice-repeat-btn" data-mode="verse" type="button" aria-pressed="false">Verse</button>
-            <button class="voice-repeat-btn" data-mode="passage" type="button" aria-pressed="false">Passage</button>
+        <div class="voice-tray" hidden>
+          <div class="voice-tray-row">
+            <span class="voice-tray-label">Speed</span>
+            <div class="voice-stepper">
+              <button class="voice-step voice-rate-down" type="button" aria-label="Slower">−</button>
+              <span class="voice-rate-val">1.0×</span>
+              <button class="voice-step voice-rate-up" type="button" aria-label="Faster">+</button>
+            </div>
           </div>
-        </div>
-        <div class="voice-tray-row">
-          <span class="voice-tray-label">Repeat delay</span>
-          <div class="voice-stepper">
-            <button class="voice-step voice-delay-down" type="button" aria-label="Less delay">−</button>
-            <span class="voice-delay-val">0.0s</span>
-            <button class="voice-step voice-delay-up" type="button" aria-label="More delay">+</button>
+          <div class="voice-tray-row">
+            <span class="voice-tray-label">Voice</span>
+            <select class="voice-select" aria-label="Reading voice"></select>
+          </div>
+          <div class="voice-tray-row">
+            <span class="voice-tray-label">Repeat</span>
+            <div class="voice-repeat-group" role="group" aria-label="Repeat mode">
+              <button class="voice-repeat-btn" data-mode="none" type="button" aria-pressed="true">Off</button>
+              <button class="voice-repeat-btn" data-mode="verse" type="button" aria-pressed="false">Verse</button>
+              <button class="voice-repeat-btn" data-mode="passage" type="button" aria-pressed="false">Passage</button>
+            </div>
+          </div>
+          <div class="voice-tray-row">
+            <span class="voice-tray-label">Repeat delay</span>
+            <div class="voice-stepper">
+              <button class="voice-step voice-delay-down" type="button" aria-label="Less delay">−</button>
+              <span class="voice-delay-val">0.0s</span>
+              <button class="voice-step voice-delay-up" type="button" aria-label="More delay">+</button>
+            </div>
           </div>
         </div>
       </div>
@@ -866,13 +957,19 @@ class VoicePlayer {
 
   _bind() {
     const eng = this.engine;
-    this._$('.voice-toggle').addEventListener('click', () => {
+
+    const togglePlay = () => {
       if (eng.state === 'playing') eng.pauseScripture();
       else if (eng.state === 'paused') eng.resumeScripture();
-    });
+    };
+    this._$('.voice-compact-toggle').addEventListener('click', togglePlay);
+    this._$('.voice-toggle').addEventListener('click', togglePlay);
+
     this._$('.voice-stop').addEventListener('click', () => eng.stopScripture());
     this._$('.voice-prev').addEventListener('click', () => eng.prev());
     this._$('.voice-next').addEventListener('click', () => eng.next());
+
+    this._$('.voice-expand-toggle').addEventListener('click', () => this._setExpanded(true));
 
     this._$('.voice-tray-toggle').addEventListener('click', () => {
       const tray = this._$('.voice-tray');
@@ -891,6 +988,30 @@ class VoicePlayer {
       btn.addEventListener('click', () => eng.setRepeatMode(btn.dataset.mode));
     });
     this._$('.voice-select').addEventListener('change', e => eng.setVoice(e.target.value));
+
+    // Collapse when tapping outside the player (but not on another control).
+    document.addEventListener('click', e => {
+      if (!this.el.classList.contains('expanded')) return;
+      if (this.el.contains(e.target)) return;
+      this._setExpanded(false);
+    });
+  }
+
+  _setExpanded(expanded) {
+    const expandedEl = this._$('.voice-expanded');
+    if (expanded) {
+      expandedEl.removeAttribute('hidden');
+      this.el.classList.add('expanded');
+      this._$('.voice-expand-toggle').setAttribute('aria-expanded', 'true');
+    } else {
+      expandedEl.setAttribute('hidden', '');
+      this.el.classList.remove('expanded');
+      this._$('.voice-expand-toggle').setAttribute('aria-expanded', 'false');
+      // Also collapse the settings tray so it’s fresh next time.
+      this._$('.voice-tray').setAttribute('hidden', '');
+      this.el.classList.remove('tray-open');
+      this._$('.voice-tray-toggle').setAttribute('aria-expanded', 'false');
+    }
   }
 
   async _populateVoices() {
@@ -915,15 +1036,28 @@ class VoicePlayer {
     document.body.classList.toggle('voice-active', visible);
 
     const item = eng.playlist[eng.index];
-    this._$('.voice-ref').textContent = item ? item.ref : '';
-    this._$('.voice-sub').textContent = eng.statusLabel || (eng.playlist.length > 1 ? `${eng.index + 1} / ${eng.playlist.length}` : '');
+    const refText = item ? item.ref : '';
+    const subText = eng.statusLabel || (eng.playlist.length > 1 ? `${eng.index + 1} / ${eng.playlist.length}` : '');
 
-    const toggle = this._$('.voice-toggle');
-    if (eng.state === 'paused') {
-      toggle.textContent = '▶'; toggle.setAttribute('aria-label', 'Resume'); toggle.setAttribute('aria-pressed', 'false');
-    } else {
-      toggle.textContent = '⏸'; toggle.setAttribute('aria-label', 'Pause'); toggle.setAttribute('aria-pressed', 'true');
-    }
+    // Compact + expanded labels stay in sync.
+    this._$('.voice-ref').textContent = refText;
+    this._$('.voice-sub').textContent = subText;
+    this._$('.voice-compact-ref').textContent = refText;
+    this._$('.voice-compact-sub').textContent = subText;
+
+    const isPaused = eng.state === 'paused';
+    [this._$('.voice-toggle'), this._$('.voice-compact-toggle')].forEach(btn => {
+      if (!btn) return;
+      if (isPaused) {
+        btn.textContent = '▶';
+        btn.setAttribute('aria-label', 'Resume');
+        btn.setAttribute('aria-pressed', 'false');
+      } else {
+        btn.textContent = '⏸';
+        btn.setAttribute('aria-label', 'Pause');
+        btn.setAttribute('aria-pressed', 'true');
+      }
+    });
 
     this._$('.voice-rate-val').textContent = `${eng.settings.rate.toFixed(1)}×`;
     this._$('.voice-delay-val').textContent = `${(eng.settings.repeatDelayMs / 1000).toFixed(1)}s`;
@@ -962,6 +1096,9 @@ function initVoice(appCallbacks = {}) {
       try { appCallbacks.onStateChange?.(state, eng); } catch {}
     },
   });
+  // If the saved voice is a Kokoro voice, start downloading the model now so
+  // it's ready (or close) by the time the user hits Play.
+  try { provider.onVoiceSelected?.(engine.settings.voiceId); } catch {}
   return Voice;
 }
 
