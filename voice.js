@@ -1081,6 +1081,9 @@ function escapeAttr(s) { return escapeHtml(s); }
 // config.js is a classic script loaded before app.js, so this is a global.
 // typeof-guarded so the module still parses if it's ever loaded standalone.
 const SUPABASE_PROJECT_URL = (typeof SUPABASE_URL === 'string' && SUPABASE_URL) || '';
+// Public key, already shipped in config.js. The Edge Function gateway rejects
+// requests without it even though the function itself does no auth.
+const SUPABASE_PUBLIC_KEY = (typeof SUPABASE_ANON_KEY === 'string' && SUPABASE_ANON_KEY) || '';
 const AUDIO_BUCKET_URL = `${SUPABASE_PROJECT_URL}/storage/v1/object/public/scripture-audio`;
 const TTS_FUNCTION_URL = `${SUPABASE_PROJECT_URL}/functions/v1/tts`;
 const AUDIO_VOICE = 'marin';
@@ -1167,7 +1170,11 @@ class AudioFileProvider {
         try {
           const gen = await fetch(TTS_FUNCTION_URL, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
+              'apikey': SUPABASE_PUBLIC_KEY,
+            },
             body: JSON.stringify({ ref, translation: this._translation(), voice: AUDIO_VOICE }),
             signal: ctrl.signal,
           });
