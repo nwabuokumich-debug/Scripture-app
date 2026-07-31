@@ -731,10 +731,14 @@ class VoiceEngine {
     }
     buzz();
     this._emitState();
-    this._playIndex(this.index);
+    this._playIndex(this.index, { restart: true });
   }
 
-  _playIndex(i) {
+  // `restart` means "begin this verse from its start" — a repeat, a skip, or
+  // a fresh play. Its absence means the natural advance to the following
+  // verse, which is the only case where a stitched stream may legitimately
+  // already be past the verse the engine thinks it is on.
+  _playIndex(i, { restart = false } = {}) {
     const myToken = this.token;
     this.index = i;
     const item = this.playlist[i];
@@ -749,6 +753,10 @@ class VoiceEngine {
       rate: this.settings.rate,
       item,                                  // providers keyed by verse ref need this
       index: i,                              // position within a stitched passage
+      restart,
+      repeatMode: this.settings.repeatMode,
+      repeatDelayMs: this.settings.repeatDelayMs,
+      count: this.playlist.length,
       onStatus: label => {
         if (myToken !== this.token) return;
         this.statusLabel = label || '';
@@ -801,7 +809,9 @@ class VoiceEngine {
     if (nextIndex === null) { this._finish(); return; }
 
     const delay = Math.max(0, this.settings.repeatDelayMs || 0);
-    const go = () => { if (this.state === 'playing') this._playIndex(nextIndex); };
+    // Anything other than stepping onto the next verse is a deliberate restart.
+    const restart = nextIndex !== i + 1;
+    const go = () => { if (this.state === 'playing') this._playIndex(nextIndex, { restart }); };
     if (delay > 0 && atRepeatBoundary) {
       const myToken = this.token;
       this._delayTimer = setTimeout(() => {
@@ -833,7 +843,7 @@ class VoiceEngine {
       this._advanceAfter(this.index);   // current chunk already finished; move on
     } else if (this._pausedInDelay) {
       this._pausedInDelay = false;
-      this._playIndex(this.index);      // we were between repeats; restart current
+      this._playIndex(this.index, { restart: true });   // we were between repeats
     } else {
       this.provider.resume();
       this._startHeartbeat();
@@ -849,7 +859,7 @@ class VoiceEngine {
     this.state = 'playing';
     buzz();
     this._emitState();
-    this._playIndex(target);
+    this._playIndex(target, { restart: true });
   }
   next() { this.skipTo(this.index + 1); }
   prev() { this.skipTo(this.index - 1); }
@@ -889,8 +899,20 @@ class VoiceEngine {
   // ── settings (apply to subsequent utterances) ──
   setPlaybackRate(rate) { this.settings.rate = clampRate(rate); saveVoiceSettings(this.settings); this._emitState(); }
   setVoice(voiceId)     { this.settings.voiceId = voiceId || ''; saveVoiceSettings(this.settings); try { this.provider.onVoiceSelected?.(this.settings.voiceId); } catch {} this._emitState(); }
-  setRepeatMode(mode)   { this.settings.repeatMode = mode; saveVoiceSettings(this.settings); this._emitState(); }
-  setRepeatDelay(ms)    { this.settings.repeatDelayMs = Math.min(DELAY_MAX, Math.max(0, ms | 0)); saveVoiceSettings(this.settings); this._emitState(); }
+  setRepeatMode(mode)   { this.settings.repeatMode = mode; saveVoiceSettings(this.settings); this._syncRepeat(); this._emitState(); }
+  setRepeatDelay(ms)    { this.settings.repeatDelayMs = Math.min(DELAY_MAX, Math.max(0, ms | 0)); saveVoiceSettings(this.settings); this._syncRepeat(); this._emitState(); }
+
+  // Native looping is decided by the provider from these two settings, so it
+  // has to be told when they change while something is already playing.
+  _syncRepeat() {
+    try {
+      this.provider.applyRepeat?.({
+        repeatMode: this.settings.repeatMode,
+        repeatDelayMs: this.settings.repeatDelayMs,
+        count: this.playlist.length,
+      });
+    } catch {}
+  }
 }
 
 // ── Floating player UI (owns only #voice-bar) ────────────────────────────
@@ -1445,6 +1467,7 @@ class AudioFileProvider {
     // element there is no JavaScript between them, so iOS throttling the page
     // can no longer stop the audio.
     this._unlocked = false;
+    this._repeatOpts = {};
     this._seq = null;              // { key, parts:[{ref,start,end}], total }
     this._seqPromise = null;
     this._seqKey = '';
@@ -1643,17 +1666,41 @@ class AudioFileProvider {
     return { seq, part };
   }
 
-  _playSequenced(part, rate) {
+  // Whether the element can loop itself. Native looping needs no JavaScript
+  // at all, which is the only way repeat keeps going once the screen locks.
+  // It is only correct when the loaded stream is exactly what should repeat:
+  // the whole passage for passage-repeat, or a single-verse playlist for
+  // verse-repeat. A repeat delay needs a gap, which only JS can produce.
+  _nativeLoop(opts = {}) {
+    if (Math.max(0, opts.repeatDelayMs || 0) > 0) return false;
+    if (opts.repeatMode === 'passage') return true;
+    if (opts.repeatMode === 'verse') return (opts.count || 1) === 1;
+    return false;
+  }
+
+  applyRepeat(opts = {}) {
+    this._repeatOpts = opts;
+    if (this._el) this._el.loop = this._nativeLoop(opts);
+  }
+
+  _playSequenced(part, opts = {}) {
     const el = this._element();
-    el.playbackRate = rate || 1;
+    el.playbackRate = opts.rate || 1;
+    this._repeatOpts = opts;
+    el.loop = this._nativeLoop(opts);
 
     const now = el.currentTime;
-    // Already past this verse: the page was throttled while the stream kept
-    // playing. Resolve at once so the engine fast-forwards its index to catch
-    // up, without touching the audio.
-    if (now >= part.end - 0.02) return Promise.resolve();
-    // Behind it (fresh start, or prev/next): jump to the verse.
-    if (now < part.start - 0.15) el.currentTime = part.start;
+    if (opts.restart) {
+      // A repeat or a skip: always go back to the start of the verse.
+      el.currentTime = part.start;
+    } else if (now >= part.end - 0.02) {
+      // Already past it on a natural advance: the page was throttled while the
+      // stream kept playing. Resolve at once so the engine fast-forwards its
+      // index to catch up, without touching the audio.
+      return Promise.resolve();
+    } else if (now < part.start - 0.15) {
+      el.currentTime = part.start;
+    }
 
     return new Promise((resolve, reject) => {
       const cleanup = () => {
@@ -1689,7 +1736,7 @@ class AudioFileProvider {
       if (cancelled) return;
       if (seq) {
         opts.onStatus?.('');
-        return this._playSequenced(seq.part, opts.rate);
+        return this._playSequenced(seq.part, opts);
       }
 
       let blob;
@@ -1704,7 +1751,7 @@ class AudioFileProvider {
       }
       if (cancelled) return;
       opts.onStatus?.('');
-      return this._play(blob, opts.rate);
+      return this._play(blob, opts);
     })();
 
     if (!this._blobs.has(this._storageUrl(ref)) && !this._seq) opts.onStatus?.('Preparing audio…');
@@ -1720,14 +1767,16 @@ class AudioFileProvider {
     };
   }
 
-  _play(blob, rate = 1) {
+  _play(blob, opts = {}) {
     const el = this._attach(blob);
+    this._repeatOpts = opts;
+    el.loop = this._nativeLoop(opts);
     return new Promise((resolve, reject) => {
       const done = (fn) => (...a) => { this._settle = null; el.onended = el.onerror = null; fn(...a); };
       this._settle = { cleanup: () => { el.onended = el.onerror = null; } };
-      el.onended = done(resolve);
+      el.onended = done(resolve);      // never fires while el.loop is true
       el.onerror = done(() => reject(new Error('audio element error')));
-      el.playbackRate = rate || 1;
+      el.playbackRate = opts.rate || 1;
       el.play().catch(done(reject));
     });
   }
@@ -1838,6 +1887,8 @@ class AudioFileProvider {
 
   // End the passage for real — playback finished, or the user stopped.
   endSession() {
+    if (this._el) this._el.loop = false;
+    this._repeatOpts = {};
     this._seq = null;
     this._seqPromise = null;
     this._seqKey = '';
