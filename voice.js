@@ -726,6 +726,9 @@ class VoiceEngine {
       try {
         this.provider.prepareSequence(list, {
           onStatus: label => { this.statusLabel = label || ''; this._emitState(); },
+          repeatMode: this.settings.repeatMode,
+          repeatDelayMs: this.settings.repeatDelayMs,
+          count: list.length,
         });
       } catch {}
     }
@@ -905,13 +908,16 @@ class VoiceEngine {
   // Native looping is decided by the provider from these two settings, so it
   // has to be told when they change while something is already playing.
   _syncRepeat() {
+    let rebuild = false;
     try {
-      this.provider.applyRepeat?.({
+      rebuild = this.provider.applyRepeat?.({
         repeatMode: this.settings.repeatMode,
         repeatDelayMs: this.settings.repeatDelayMs,
         count: this.playlist.length,
-      });
+      }) === true;
     } catch {}
+    // The gap is baked into the stream, so changing it means a new stream.
+    if (rebuild && this.state === 'playing') this.playScripture(this.playlist, { startIndex: this.index });
   }
 }
 
@@ -1417,6 +1423,27 @@ const SEQ_CONCURRENCY = 6;
 // and stitching a whole chapter — isn't rejected for being outside a gesture.
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
 
+// Repeat delay, baked into the audio instead of timed in JavaScript.
+//
+// el.loop restarts the instant a stream ends and offers no way to insert a
+// gap, so a delay would otherwise force the JS path — which iOS suspends when
+// the screen locks. Appending real silence makes the gap part of the stream,
+// so a repeat with a pause still loops natively.
+//
+// One MPEG-2 Layer III frame at 24 kHz / 128 kbps mono, matching what the TTS
+// renders produce: 72 * 128000 / 24000 = 384 bytes, 576 samples = 24 ms. A
+// frame whose header is valid and whose payload is zero decodes to silence.
+const SILENCE_HEADER = [0xFF, 0xF3, 0xC4, 0xC0];
+const SILENCE_FRAME_BYTES = 384;
+const SILENCE_FRAME_MS = 24;
+
+function silenceBlob(ms) {
+  const frames = Math.max(1, Math.round(ms / SILENCE_FRAME_MS));
+  const bytes = new Uint8Array(frames * SILENCE_FRAME_BYTES);
+  for (let i = 0; i < frames; i++) bytes.set(SILENCE_HEADER, i * SILENCE_FRAME_BYTES);
+  return { blob: new Blob([bytes], { type: 'audio/mpeg' }), seconds: (frames * SILENCE_FRAME_MS) / 1000 };
+}
+
 // Read a blob's playing time without attaching it to the visible player.
 function measureDuration(blob) {
   return new Promise(resolve => {
@@ -1603,9 +1630,10 @@ class AudioFileProvider {
   // parallel), measures each one, and concatenates them into a single MP3
   // blob. MP3 frames join end-to-end, and these renders are constant-bitrate,
   // so seeking by our own measured offsets stays accurate.
-  prepareSequence(items, { onStatus } = {}) {
+  prepareSequence(items, { onStatus, ...repeat } = {}) {
     this._seq = null;
     this._seqPromise = null;
+    if (repeat.repeatMode !== undefined) this._repeatOpts = repeat;
     if (!this._canPlay() || !items?.length) return;
 
     const refs = items.map(it => it?.ref).filter(Boolean);
@@ -1642,11 +1670,23 @@ class AudioFileProvider {
         t += durations[i];
       });
 
+      // Append the repeat gap so a looping stream pauses without JS. Rebuilt
+      // whenever the delay changes (see applyRepeat).
+      const pieces = blobs.slice();
+      const gapMs = Math.max(0, this._repeatOpts?.repeatDelayMs || 0);
+      let gap = 0;
+      if (gapMs > 0 && this._nativeLoop(this._repeatOpts)) {
+        const sil = silenceBlob(gapMs);
+        pieces.push(sil.blob);
+        gap = sil.seconds;
+      }
+
       const seq = {
         key,
+        gapMs: gap > 0 ? gapMs : 0,
         parts,
-        total: t,
-        blob: new Blob(blobs, { type: 'audio/mpeg' }),
+        total: t + gap,
+        blob: new Blob(pieces, { type: 'audio/mpeg' }),
       };
       onStatus?.('');
       return seq;
@@ -1672,15 +1712,28 @@ class AudioFileProvider {
   // the whole passage for passage-repeat, or a single-verse playlist for
   // verse-repeat. A repeat delay needs a gap, which only JS can produce.
   _nativeLoop(opts = {}) {
-    if (Math.max(0, opts.repeatDelayMs || 0) > 0) return false;
     if (opts.repeatMode === 'passage') return true;
     if (opts.repeatMode === 'verse') return (opts.count || 1) === 1;
     return false;
   }
 
   applyRepeat(opts = {}) {
+    const prev = this._repeatOpts || {};
     this._repeatOpts = opts;
     if (this._el) this._el.loop = this._nativeLoop(opts);
+
+    // The gap lives inside the stitched blob, so a changed delay — or a
+    // change in whether we loop natively at all — means rebuilding it. The
+    // engine restarts the verse, which picks up the new stream.
+    const wantGap = this._nativeLoop(opts) ? Math.max(0, opts.repeatDelayMs || 0) : 0;
+    const haveGap = this._seq?.gapMs || 0;
+    if (this._seq && wantGap !== haveGap) {
+      this._seq = null;
+      this._seqPromise = null;
+      this._seqKey = '';
+      return true;      // caller must restart for the rebuilt stream
+    }
+    return false;
   }
 
   _playSequenced(part, opts = {}) {
