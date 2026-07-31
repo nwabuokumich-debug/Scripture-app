@@ -711,11 +711,24 @@ class VoiceEngine {
     if (!this.isSupported) return;
     const list = (items || []).filter(it => it && typeof it.text === 'string' && it.text.trim());
     if (!list.length) return;
+    // Still inside the click that triggered playback — this is the only
+    // moment iOS will let us claim the audio element.
+    try { this.provider.unlock?.(); } catch {}
     this._hardStop();
     this._errorStreak = 0;
     this.playlist = list;
     this.index = Math.min(Math.max(0, startIndex), list.length - 1);
     this.state = 'playing';
+    // Let a provider stitch the whole passage into one stream up front. It
+    // resolves asynchronously; speakChunk waits on it internally, so playback
+    // still starts from this synchronous call.
+    if (this.provider.prepareSequence) {
+      try {
+        this.provider.prepareSequence(list, {
+          onStatus: label => { this.statusLabel = label || ''; this._emitState(); },
+        });
+      } catch {}
+    }
     buzz();
     this._emitState();
     this._playIndex(this.index);
@@ -735,6 +748,7 @@ class VoiceEngine {
       voiceId: this.settings.voiceId,
       rate: this.settings.rate,
       item,                                  // providers keyed by verse ref need this
+      index: i,                              // position within a stitched passage
       onStatus: label => {
         if (myToken !== this.token) return;
         this.statusLabel = label || '';
@@ -842,6 +856,7 @@ class VoiceEngine {
 
   stopScripture() {
     this._hardStop();
+    try { this.provider.endSession?.(); } catch {}
     this.state = 'idle';
     buzz();
     this._emitState();
@@ -867,6 +882,7 @@ class VoiceEngine {
     this._pausedInDelay = false;
     this.state = 'idle';
     this.provider.cancel();
+    try { this.provider.endSession?.(); } catch {}
     this._emitState();
   }
 
@@ -1371,6 +1387,44 @@ function slugForRef(ref) {
   return String(ref).trim().replace(/\s+/g, '-').replace(/:/g, '-');
 }
 
+// How many verses to fetch/render at once when preparing a chapter.
+const SEQ_CONCURRENCY = 6;
+
+// A valid, empty WAV. Playing this inside a user gesture is what unlocks the
+// audio element on iOS, so the real play() — which now happens after fetching
+// and stitching a whole chapter — isn't rejected for being outside a gesture.
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
+
+// Read a blob's playing time without attaching it to the visible player.
+function measureDuration(blob) {
+  return new Promise(resolve => {
+    let url = null;
+    const done = (d) => { try { URL.revokeObjectURL(url); } catch {} resolve(isFinite(d) && d > 0 ? d : 0); };
+    try {
+      url = URL.createObjectURL(blob);
+      const probe = new Audio();
+      probe.preload = 'metadata';
+      probe.onloadedmetadata = () => done(probe.duration);
+      probe.onerror = () => done(0);
+      probe.src = url;
+    } catch { done(0); }
+  });
+}
+
+// Run jobs with a ceiling on how many are in flight at once.
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  }));
+  return out;
+}
+
 class AudioFileProvider {
   constructor(fallback) {
     this.name = 'audiofile';
@@ -1378,12 +1432,22 @@ class AudioFileProvider {
     this.needsHeartbeat = false;   // a real <audio> element needs no keep-alive
     this.fallback = fallback;
     this._el = null;
-    this._objectUrls = new Map();  // storage url -> blob object URL
-    this._inflight = new Map();    // storage url -> Promise<objectURL>
+    this._blobs = new Map();       // storage url -> Blob
+    this._inflight = new Map();    // storage url -> Promise<Blob>
     this._misses = new Set();      // `${translation}|${ref}` known unrenderable this session
     this._bust = new Set();        // storage urls whose next fetch must skip the HTTP cache
     this._settle = null;
     this._fallbackHandle = null;
+    this._srcUrl = null;           // object URL currently attached to the element
+
+    // A whole passage stitched into one continuous stream. This is what lets
+    // playback survive the screen locking: with every verse in a single
+    // element there is no JavaScript between them, so iOS throttling the page
+    // can no longer stop the audio.
+    this._unlocked = false;
+    this._seq = null;              // { key, parts:[{ref,start,end}], total }
+    this._seqPromise = null;
+    this._seqKey = '';
   }
 
   isSupported() {
@@ -1397,8 +1461,6 @@ class AudioFileProvider {
       && !!window.URL?.createObjectURL;
   }
 
-  // The voice picker still belongs to the fallback chain — those voices apply
-  // to anything this provider can't serve.
   getVoices(...args) { return this.fallback.getVoices(...args); }
   onVoiceSelected(...args) { return this.fallback.onVoiceSelected?.(...args); }
 
@@ -1429,14 +1491,38 @@ class AudioFileProvider {
       this._el = new Audio();
       this._el.preload = 'auto';
       this._el.crossOrigin = 'anonymous';
+      this._el.setAttribute('playsinline', '');
     }
     return this._el;
   }
 
-  // Resolve a ref to a playable object URL: try Storage, then render on miss.
+  // Must be called synchronously from the click that starts playback.
+  unlock() {
+    if (this._unlocked || !this._canPlay()) return;
+    const el = this._element();
+    if (!el.paused) { this._unlocked = true; return; }
+    try {
+      el.src = SILENT_WAV;
+      const p = el.play();
+      if (p?.then) p.then(() => { try { el.pause(); } catch {} this._unlocked = true; }).catch(() => {});
+      else this._unlocked = true;
+    } catch {}
+  }
+
+  _attach(blob) {
+    const el = this._element();
+    const next = URL.createObjectURL(blob);
+    const prev = this._srcUrl;
+    this._srcUrl = next;
+    el.src = next;
+    if (prev) { try { URL.revokeObjectURL(prev); } catch {} }
+    return el;
+  }
+
+  // Resolve a ref to its audio Blob: repo file, then Storage, then render.
   _resolve(ref) {
     const url = this._storageUrl(ref);
-    if (this._objectUrls.has(url)) return Promise.resolve(this._objectUrls.get(url));
+    if (this._blobs.has(url)) return Promise.resolve(this._blobs.get(url));
     if (this._inflight.has(url)) return this._inflight.get(url);
 
     // After a reload the browser's own HTTP cache still holds the bad copy
@@ -1480,19 +1566,117 @@ class AudioFileProvider {
       if (!/^audio\//i.test(res.headers.get('content-type') || '')) {
         throw new Error(`not audio for ${ref}`);
       }
-      const objectUrl = URL.createObjectURL(await res.blob());
-      this._objectUrls.set(url, objectUrl);
-      return objectUrl;
+      const blob = await res.blob();
+      this._blobs.set(url, blob);
+      return blob;
     })().finally(() => this._inflight.delete(url));
 
     this._inflight.set(url, job);
     return job;
   }
 
+  // ── continuous passage ──────────────────────────────────────────────────
+  // Called by the engine when a playlist starts. Fetches every verse (in
+  // parallel), measures each one, and concatenates them into a single MP3
+  // blob. MP3 frames join end-to-end, and these renders are constant-bitrate,
+  // so seeking by our own measured offsets stays accurate.
+  prepareSequence(items, { onStatus } = {}) {
+    this._seq = null;
+    this._seqPromise = null;
+    if (!this._canPlay() || !items?.length) return;
+
+    const refs = items.map(it => it?.ref).filter(Boolean);
+    if (refs.length !== items.length) return;   // no refs: single-file path
+
+    const key = `${this._translation()}|${refs.join('|')}`;
+    this._seqKey = key;
+
+    this._seqPromise = (async () => {
+      let done = 0;
+      const blobs = await mapLimit(refs, SEQ_CONCURRENCY, async (ref) => {
+        try {
+          const b = await this._resolve(ref);
+          return b;
+        } catch {
+          return null;
+        } finally {
+          done++;
+          if (refs.length > 1) onStatus?.(`Preparing chapter… ${done}/${refs.length}`);
+        }
+      });
+
+      // A single missing verse would silently shift every later offset, so
+      // fall back to per-verse playback rather than play the wrong audio.
+      if (this._seqKey !== key || blobs.some(b => !b)) return null;
+
+      const durations = await mapLimit(blobs, SEQ_CONCURRENCY, b => measureDuration(b));
+      if (this._seqKey !== key || durations.some(d => !d)) return null;
+
+      const parts = [];
+      let t = 0;
+      refs.forEach((ref, i) => {
+        parts.push({ ref, start: t, end: t + durations[i] });
+        t += durations[i];
+      });
+
+      const seq = {
+        key,
+        parts,
+        total: t,
+        blob: new Blob(blobs, { type: 'audio/mpeg' }),
+      };
+      onStatus?.('');
+      return seq;
+    })().catch(() => null);
+  }
+
+  async _sequence(index, ref) {
+    if (!this._seqPromise) return null;
+    const seq = this._seq || await this._seqPromise;
+    if (!seq) return null;
+    if (this._seq !== seq) {
+      this._seq = seq;
+      this._attach(seq.blob);
+    }
+    const part = seq.parts[index];
+    if (!part || part.ref !== ref) return null;
+    return { seq, part };
+  }
+
+  _playSequenced(part, rate) {
+    const el = this._element();
+    el.playbackRate = rate || 1;
+
+    const now = el.currentTime;
+    // Already past this verse: the page was throttled while the stream kept
+    // playing. Resolve at once so the engine fast-forwards its index to catch
+    // up, without touching the audio.
+    if (now >= part.end - 0.02) return Promise.resolve();
+    // Behind it (fresh start, or prev/next): jump to the verse.
+    if (now < part.start - 0.15) el.currentTime = part.start;
+
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        el.removeEventListener('timeupdate', onTime);
+        el.removeEventListener('ended', onEnd);
+        el.removeEventListener('error', onErr);
+        this._settle = null;
+      };
+      const onTime = () => { if (el.currentTime >= part.end - 0.02) { cleanup(); resolve(); } };
+      const onEnd  = () => { cleanup(); resolve(); };
+      const onErr  = () => { cleanup(); reject(new Error('audio element error')); };
+      this._settle = { cleanup };
+      el.addEventListener('timeupdate', onTime);
+      el.addEventListener('ended', onEnd);
+      el.addEventListener('error', onErr);
+      if (el.paused) el.play().catch(err => { cleanup(); reject(err); });
+    });
+  }
+
+  // ── playback ────────────────────────────────────────────────────────────
   speakChunk(text, opts = {}) {
     const ref = opts.item?.ref;
 
-    // No ref (or a ref we already know has no audio) → straight to fallback.
     if (!ref || !this._canPlay() || this._misses.has(this._missKey(ref))) {
       return this.fallback.speakChunk(text, opts);
     }
@@ -1500,9 +1684,17 @@ class AudioFileProvider {
     let cancelled = false;
 
     const promise = (async () => {
-      let src;
+      // Continuous stream first — the only mode that survives a locked screen.
+      const seq = await this._sequence(opts.index ?? -1, ref);
+      if (cancelled) return;
+      if (seq) {
+        opts.onStatus?.('');
+        return this._playSequenced(seq.part, opts.rate);
+      }
+
+      let blob;
       try {
-        src = await this._resolve(ref);
+        blob = await this._resolve(ref);
       } catch {
         this._misses.add(this._missKey(ref));
         if (cancelled) return;
@@ -1512,12 +1704,10 @@ class AudioFileProvider {
       }
       if (cancelled) return;
       opts.onStatus?.('');
-      return this._play(src, opts.rate);
+      return this._play(blob, opts.rate);
     })();
 
-    // A first-time verse takes a few seconds to render; say so rather than
-    // sitting silent.
-    if (!this._objectUrls.has(this._storageUrl(ref))) opts.onStatus?.('Preparing audio…');
+    if (!this._blobs.has(this._storageUrl(ref)) && !this._seq) opts.onStatus?.('Preparing audio…');
 
     return {
       promise,
@@ -1530,14 +1720,13 @@ class AudioFileProvider {
     };
   }
 
-  _play(src, rate = 1) {
-    const el = this._element();
+  _play(blob, rate = 1) {
+    const el = this._attach(blob);
     return new Promise((resolve, reject) => {
-      this._settle = { resolve, reject };
       const done = (fn) => (...a) => { this._settle = null; el.onended = el.onerror = null; fn(...a); };
+      this._settle = { cleanup: () => { el.onended = el.onerror = null; } };
       el.onended = done(resolve);
       el.onerror = done(() => reject(new Error('audio element error')));
-      el.src = src;
       el.playbackRate = rate || 1;
       el.play().catch(done(reject));
     });
@@ -1546,18 +1735,16 @@ class AudioFileProvider {
   _stopElement() {
     const el = this._el;
     if (!el) return;
+    try { this._settle?.cleanup?.(); } catch {}
     el.onended = el.onerror = null;
     try { el.pause(); } catch {}
-    try { el.removeAttribute('src'); el.load(); } catch {}
+    // In sequence mode the stream is shared by every verse — tearing down the
+    // source on each verse boundary would defeat the whole point.
+    if (!this._seq) {
+      try { el.removeAttribute('src'); el.load(); } catch {}
+      if (this._srcUrl) { try { URL.revokeObjectURL(this._srcUrl); } catch {} this._srcUrl = null; }
+    }
     this._settle = null;
-  }
-
-  // Warm the next verse while the current one plays, so a first-time chapter
-  // doesn't stall between every verse.
-  prefetch(text, opts = {}) {
-    const ref = opts.item?.ref;
-    if (!ref || this._misses.has(this._missKey(ref)) || !this._canPlay()) return;
-    this._resolve(ref).catch(() => {});
   }
 
   // Throw away every cached copy of one verse and pull it down fresh.
@@ -1572,14 +1759,14 @@ class AudioFileProvider {
     if (!ref) return false;
     const url = this._storageUrl(ref);
 
-    const stale = this._objectUrls.get(url);
-    if (stale) { try { URL.revokeObjectURL(stale); } catch {} }
-    this._objectUrls.delete(url);
+    this._blobs.delete(url);
     this._inflight.delete(url);
     this._misses.delete(this._missKey(ref));
+    // The stitched stream embeds the stale copy, so it has to be rebuilt too.
+    this._seq = null;
+    this._seqPromise = null;
+    this._seqKey = '';
 
-    // The service worker serves audio cache-first, so its copy has to go too
-    // or the refetch below just hands back the same bad bytes.
     this._bust.add(url);
     try {
       const cache = await caches.open('scripture-audio');
@@ -1604,12 +1791,15 @@ class AudioFileProvider {
     return true;
   }
 
-  // Position within the current verse. Only file-backed playback can report
-  // this — Web Speech has no notion of elapsed time — so the player hides its
-  // scrubber whenever this returns null.
+  // Position for the scrubber. In sequence mode this spans the whole passage;
+  // otherwise the single verse. Web Speech can report neither, so the player
+  // hides the scrubber when this returns null.
   getProgress() {
     const el = this._el;
     if (!el || this._fallbackHandle) return null;
+    if (this._seq) {
+      return { current: Math.min(el.currentTime || 0, this._seq.total), duration: this._seq.total };
+    }
     const duration = el.duration;
     if (!isFinite(duration) || duration <= 0) return null;
     return { current: Math.min(el.currentTime || 0, duration), duration };
@@ -1637,10 +1827,35 @@ class AudioFileProvider {
     try { this._el?.play?.().catch(() => {}); } catch {}
   }
 
+  // Stop the current utterance only. The stitched passage is deliberately
+  // kept: prev/next go through here, and rebuilding a whole chapter on every
+  // skip would be both slow and pointless.
   cancel() {
     try { this.fallback.cancel(); } catch {}
     this._fallbackHandle = null;
     this._stopElement();
+  }
+
+  // End the passage for real — playback finished, or the user stopped.
+  endSession() {
+    this._seq = null;
+    this._seqPromise = null;
+    this._seqKey = '';
+    this.cancel();
+    const el = this._el;
+    if (el) {
+      try { el.removeAttribute('src'); el.load(); } catch {}
+      if (this._srcUrl) { try { URL.revokeObjectURL(this._srcUrl); } catch {} this._srcUrl = null; }
+    }
+  }
+
+  // In sequence mode everything is already in one blob, so there is nothing
+  // to warm ahead of the next verse.
+  prefetch(text, opts = {}) {
+    if (this._seq || this._seqPromise) return;
+    const ref = opts.item?.ref;
+    if (!ref || this._misses.has(this._missKey(ref)) || !this._canPlay()) return;
+    this._resolve(ref).catch(() => {});
   }
 }
 

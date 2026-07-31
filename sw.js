@@ -1,4 +1,4 @@
-const CACHE = 'scripture-v112';
+const CACHE = 'scripture-v113';
 
 // Rendered verse audio is immutable and expensive to fetch, so it lives in its
 // own deliberately UNVERSIONED cache. The app-shell cache is wiped on every
