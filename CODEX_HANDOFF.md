@@ -6,11 +6,11 @@ _Last updated: 2026-07-31_
 
 ## Current Status (read this first)
 
-- Repo branch: `main`. Last commit `37e8d53` (2026-07-31), pushed and verified live on GitHub Pages.
+- Repo branch: `main`. Last commit `f59a827` (2026-07-31), pushed and verified live on GitHub Pages.
 - **Voice quality is solved.** Pre-rendered OpenAI TTS (voice `marin`) replaced the mechanical system voice. User confirmed on device: "sounds perfect." See [Voice Quality — SOLVED](#voice-quality--solved-2026-07-31).
 - The June player redesign that had sat uncommitted for ~6 weeks shipped in the same commit.
 
-**One thing left to finish:** only **Psalm 23** currently has audio (it's committed to the repo). Every other chapter falls back to the old voice until three items are done in the Supabase dashboard — bucket, secret, function. See [Remaining steps](#remaining-steps-all-in-the-supabase-dashboard--no-cli-needed).
+**Complete and working.** Any verse plays in marin. Storage bucket, Edge Function, and secret are all live and verified end to end.
 
 Untracked scratch files (not part of any feature): `__voice-preview.html` (standalone harness for eyeballing the voice bar without booting the app), `tmp-diligence-search.mjs` (one-off Supabase scan for diligence/sloth/idleness verses).
 
@@ -45,7 +45,7 @@ The largest technical build. In-browser Transformers.js (`all-MiniLM-L6-v2`) emb
 Four commits building the TTS subsystem and player. See below.
 
 ### Phase 9 — Real voices (2026-07-31)
-After a six-week gap, replaced synthesis-on-device with pre-rendered OpenAI TTS. Commit `37e8d53`.
+After a six-week gap, replaced synthesis-on-device with pre-rendered OpenAI TTS. Commits `37e8d53` (provider + renderer) and `f59a827` (Edge Function auth). Storage bucket and `tts` function deployed and verified the same day.
 
 ---
 
@@ -158,21 +158,25 @@ Rendered audio now lives in an **unversioned** `scripture-audio` cache, cache-fi
 | `AudioFileProvider` | ✅ shipped and verified live |
 | `render-audio.mjs` | ✅ working, resumable, prints cost before spending |
 | Psalm 23 (KJV, marin) in repo | ✅ live, confirmed good on device |
-| `tts` Edge Function | ✅ written, ❌ **not deployed** |
-| `scripture-audio` Storage bucket | ❌ **not created** |
-| `OPENAI_API_KEY` Edge secret | ❌ **not set** |
+| `tts` Edge Function | ✅ deployed and verified |
+| `scripture-audio` Storage bucket | ✅ created, public |
+| `OPENAI_API_KEY` Edge secret | ✅ set |
 
-**So: Psalm 23 plays in marin on the phone today. Every other chapter still falls back to the old voice** until the three ❌ items are done.
+**Fully working as of 2026-07-31.** Any verse in any chapter plays in marin. First play of a new verse renders in ~5s; every play after is ~0.3s from Storage.
 
-### Remaining steps (all in the Supabase dashboard — no CLI needed)
+Verified end to end: John 3:16 rendered (185KB), stored, publicly playable; a second request returned `cached: true` with no new OpenAI spend; and `{"ref":"Hacked 1:1"}` was refused with HTTP 400 rather than synthesized.
 
-Homebrew install of the Supabase CLI wants Xcode Command Line Tools; the dashboard does both jobs and was the chosen path.
+### Setup that was done (for reference if it ever needs redoing)
 
-1. **Storage → New bucket** → name exactly `scripture-audio` → **Public** → Create
-2. **Settings → Edge Functions → Secrets** → add `OPENAI_API_KEY`
-3. **Edge Functions → Deploy via Editor** → name exactly `tts` → paste `supabase/functions/tts/index.ts` → Deploy
+All via the Supabase dashboard — the Homebrew install of the Supabase CLI wants Xcode Command Line Tools, which isn't worth it.
 
-Bucket and function names are hardcoded in `voice.js`. Then verify by playing a verse outside Psalm 23.
+1. **Storage → New bucket** → name exactly `scripture-audio` → **Public**
+2. **Settings → Edge Functions → Secrets** → `OPENAI_API_KEY`, **value only** (pasting the whole `OPENAI_API_KEY=sk-...` line from `.env.local` cost a debugging round)
+3. **Edge Functions → Deploy via Editor** → name exactly `tts` → paste `supabase/functions/tts/index.ts`
+
+Bucket and function names are hardcoded in `voice.js`.
+
+**Gotcha worth remembering:** the Functions gateway rejects requests with no auth header (`UNAUTHORIZED_NO_AUTH_HEADER`) *before the function ever runs*, even though the function itself does no auth. The client must send the public anon key as both `Authorization: Bearer` and `apikey`. Fixed in `f59a827`.
 
 ### Cost model
 
@@ -192,9 +196,9 @@ Current values in the working tree:
 | Anchor | Location | Current |
 |---|---|---|
 | `style.css?v=N` | `index.html:16` | **104** |
-| `app.js?v=M` | `index.html:262` | **96** ⚠️ needs 97 |
-| `voice.js?v=P` | `app.js:2` (import specifier) | **10** |
-| `CACHE = 'scripture-vK'` | `sw.js:1` | **106** |
+| `app.js?v=M` | `index.html:262` | **98** |
+| `voice.js?v=P` | `app.js:2` (import specifier) | **12** |
+| `CACHE = 'scripture-vK'` | `sw.js:1` | **108** |
 
 **Why:** GitHub Pages serves assets with caching headers. Only a changed URL forces a refetch. The SW is network-first so the SW cache isn't the issue — the browser HTTP cache is.
 
