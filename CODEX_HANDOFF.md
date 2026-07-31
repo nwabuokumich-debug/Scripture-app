@@ -6,23 +6,11 @@ _Last updated: 2026-07-31_
 
 ## Current Status (read this first)
 
-- Repo branch: `main`. **145 commits.** Last commit `12bbfde` (2026-06-17).
-- **There is ~6 weeks of uncommitted, unpushed work in the tree.** Last commit was June 17; today is July 31. Nothing since June has reached the user's phone.
-- The active problem is **voice quality**, not voice plumbing. Playback works; it sounds mechanical.
+- Repo branch: `main`. Last commit `37e8d53` (2026-07-31), pushed and verified live on GitHub Pages.
+- **Voice quality is solved.** Pre-rendered OpenAI TTS (voice `marin`) replaced the mechanical system voice. User confirmed on device: "sounds perfect." See [Voice Quality — SOLVED](#voice-quality--solved-2026-07-31).
+- The June player redesign that had sat uncommitted for ~6 weeks shipped in the same commit.
 
-### Uncommitted changes in the working tree
-
-A **redesign of the expanded Voice Mode player** — appears complete, never verified on device:
-
-| File | Change |
-|---|---|
-| `voice.js` | Restructured expanded panel: new `.voice-header` (reference + minimize chevron), centered `.voice-transport` (⏮ / big play / ⏭), settings tray now **always visible** (the ⚙ `.voice-tray-toggle` and its handler were deleted), full-width **"Stop reading"** button at the bottom. |
-| `style.css` | 68px accent play button with glow shadow, 54px transparent prev/next, mini compact row hidden while expanded. |
-| `index.html` | `style.css?v=103` → `104` |
-| `sw.js` | `scripture-v105` → `v106` |
-| `app.js` | `./voice.js?v=9` → `?v=10` |
-
-**⚠️ Cache-buster gap:** `app.js?v=96` in `index.html:262` was **not** bumped, but `app.js` text *did* change (the import line). Bump it to `97` before pushing or phones will serve the old `app.js` and keep importing `voice.js?v=9`.
+**One thing left to finish:** only **Psalm 23** currently has audio (it's committed to the repo). Every other chapter falls back to the old voice until three items are done in the Supabase dashboard — bucket, secret, function. See [Remaining steps](#remaining-steps-all-in-the-supabase-dashboard--no-cli-needed).
 
 Untracked scratch files (not part of any feature): `__voice-preview.html` (standalone harness for eyeballing the voice bar without booting the app), `tmp-diligence-search.mjs` (one-off Supabase scan for diligence/sloth/idleness verses).
 
@@ -53,11 +41,11 @@ The largest technical build. In-browser Transformers.js (`all-MiniLM-L6-v2`) emb
 
 **Verified:** query `Saul threw a spear at Jonathan` returns `1 Samuel 20:33` as result #1.
 
-### Phase 8 — Voice Mode (2026-06-04 → 06-17, and ongoing)
-See below. Four commits, then the current uncommitted redesign.
+### Phase 8 — Voice Mode (2026-06-04 → 06-17)
+Four commits building the TTS subsystem and player. See below.
 
-### Gap: 2026-06-17 → 07-31
-No commits. Work resumed 07-31 on the voice-quality question.
+### Phase 9 — Real voices (2026-07-31)
+After a six-week gap, replaced synthesis-on-device with pre-rendered OpenAI TTS. Commit `37e8d53`.
 
 ---
 
@@ -70,9 +58,11 @@ Hands-free TTS for verses, selections, chapters, and Stack cards.
 `voice.js` is **provider-abstracted**. The bottom line is literally:
 
 ```js
-const provider = new KokoroProvider(new WebSpeechProvider());   // voice.js:1073
+const provider = new AudioFileProvider(new KokoroProvider(new WebSpeechProvider()));
 const engine   = new VoiceEngine(provider);
 ```
+
+Each provider wraps the next as its fallback, so the chain degrades left to right.
 
 The provider interface is the swap seam:
 
@@ -89,7 +79,7 @@ Engine hardening already done: session token invalidates stale async callbacks; 
 
 Uses the OS `speechSynthesis`. Auto-picks the best installed English voice via `_score()` — boosts en-US/Premium/Enhanced/Neural/Google/Microsoft, heavily demotes novelty voices (Albert, Zarvox). On the user's Mac the best available is **Samantha** (no Premium/Enhanced voices installed).
 
-**This is what the user is hearing, and it is the complaint.** "Sounds too mechanical."
+**This was the original complaint** — "sounds too mechanical." It is now the last-resort fallback only, reached when a verse has no rendered audio and none can be generated.
 
 ### Provider 2 — KokoroProvider (in the code, effectively failed)
 
@@ -108,59 +98,92 @@ Practical constraint: ~80MB model download running in WASM inside an iOS PWA. Do
 
 ---
 
-## What We're Doing Now (2026-07-31)
+## Voice Quality — SOLVED (2026-07-31)
 
-**Goal: make scripture audio sound like a real voice.**
+**Goal was: make scripture audio sound like a real voice.** Done. Shipped in `37e8d53`.
 
-### The reframe that drives the plan
+### The reframe that drove it
 
-Scripture is a **fixed, finite corpus**. Acts 10 in KJV never changes. Synthesizing it live on the phone on every play — which is what the app does today — is wasted work that also guarantees the phone's mechanical voice. Every serious app in this space **pre-renders audio once and serves files**.
+Scripture is a **fixed, finite corpus**. Acts 10 in KJV never changes. Synthesizing it live on the phone on every play — what the app did before — is wasted work that also guarantees the phone's mechanical voice. Render once, serve files forever.
 
-This also means: static GitHub Pages hosting **cannot hold an API key**. Any cloud TTS needs a proxy — `server.js` or a Supabase Edge Function.
+Static GitHub Pages **cannot hold an API key**, so on-demand rendering needs a server-side proxy.
 
-### Options evaluated
+### What was chosen: pre-rendered OpenAI TTS
 
-| Option | Sound | Cost | Blocker |
-|---|---|---|---|
-| Web Speech (current) | Mechanical | Free | — it's the problem |
-| Kokoro (current) | Decent | Free | Never worked on device |
-| Enhanced system voices | OK | Free | User must install in OS settings |
-| Pre-rendered OpenAI TTS → Supabase Storage | Very good | ~tens of $ for full KJV | Needs key + proxy |
-| Pre-rendered ElevenLabs | Best synthetic | ~10–20× OpenAI | Needs key + proxy |
-| **Human narration (FCBH / Bible Brain)** | **Real human** | **Free** | **Needs free API key** |
+- Model `gpt-4o-mini-tts`, voice **`marin`**, one MP3 per verse.
+- User A/B-tested all 13 OpenAI voices on Psalm 23 (~12 cents total) and picked marin. **Verdict: "sounds perfect."**
+- OpenAI does **not** label voices by gender; marin/cedar are the two its docs flag as highest quality.
+- A delivery instruction is sent with every request ("read slowly and reverently, unhurried… pause at colons"). This is the thing a system voice structurally cannot do.
 
-_Cost figures are from June 2026 research and are unverified as of this update — confirm current rates before committing to a budget._
+### What was rejected, and why
 
-### Current direction: human narration via Bible Brain (FCBH)
+| Option | Why not |
+|---|---|
+| Web Speech | The original complaint — mechanical. Kept as last-resort fallback. |
+| Kokoro | Never produced audible output on device. Kept as fallback only. **Do not resume debugging.** |
+| ElevenLabs | User judged it better, but ~6× the cost. Revisit only if marin disappoints. |
+| Bible Brain / FCBH human narration | Key requires **manual approval, up to a week**. Abandoned on time-to-value. Still the best free option if synthesis is ever dropped. |
+| Pre-rendering the whole Bible upfront | ~$70 and ~3GB. **Explicitly rejected by the user.** Lazy rendering only. |
 
-The user chose **real human narration** over synthesis.
+### Architecture as shipped
 
-**Verified 2026-07-31 via web research:**
-- Bible Brain (FCBH's API, powers bible.is) is the Digital Bible Platform v4 — REST, JSON, free for non-commercial use, requires a developer key.
-- It has **Audio Timings endpoints** returning the start time of each verse.
-- Coverage was **231 bibleIds** as of their last published count — not universal, per-version.
+`AudioFileProvider` in `voice.js` wraps the old chain. Resolution order per verse:
 
-**NOT yet verified:** whether **KJV specifically** has audio *with* verse timings. The docs do not publish the list; it requires an authenticated query.
+```
+1. ./audio/<translation>/<Book>-<ch>-<v>.mp3   (repo, served by GH Pages — no Supabase needed)
+2. Supabase Storage bucket `scripture-audio`   (normal path once rendered)
+3. POST to `tts` Edge Function                 (renders on miss, stores, returns URL)
+4. KokoroProvider -> WebSpeechProvider         (old voice — nothing ever dies silently)
+```
 
-**Why timings matter:** the player's per-verse features (verse repeat, repeat delay, prev/next, now-playing highlight) all assume verse-level addressing. A plain chapter MP3 is one blob and would break them. Verse timings preserve the whole existing feature set.
+- Files are keyed by the verse `ref` the player already carries (`"Psalms 23:1"` → `Psalms-23-1.mp3`). `slugForRef()` is duplicated in three places — `voice.js`, `render-audio.mjs`, and the Edge Function — and **must stay in sync**.
+- `VoiceEngine` now passes `item` into `speakChunk`/`prefetch`. Older providers ignore it.
+- Next verse is prefetched during the current one, so a first-time chapter doesn't stall between verses.
+- One reused `<audio>` element: iOS unlocks playback per-element on user gesture, so reusing it is what lets verse 2 onward play without another tap.
 
-### Immediate next steps
+### The Edge Function (`supabase/functions/tts/index.ts`)
 
-1. **User:** request a free key at https://4.dbt.io/api_key/request — arrives by email.
-2. **Assistant:** query the API to confirm KJV has audio + verse timings.
-3. If yes → implement `FCBHProvider` against the existing seam:
-   - `getVoices()` → available audio filesets (dramatized / non-dramatized)
-   - `speakChunk()` → seek into the chapter audio at the verse's start time, play until the next verse's start
-   - `prefetch()` → already supported by `VoiceEngine` (`voice.js:745-748`), use it
-4. If KJV lacks timings → fall back to pre-rendered OpenAI TTS, **one file per verse** (simpler than chapter files + timestamps, and maps directly onto the existing queue).
+Holds `OPENAI_API_KEY`. Takes verse text **from the database, never from the request** — it is publicly callable and spends money, so it must only ever be able to synthesize actual scripture. Rejects unparseable refs, unknown books, and text over 1200 chars.
 
-### Decisions already made
-- Do not keep debugging Kokoro.
-- Do not put any API key in client code.
-- Prefer pre-rendered/cached audio over live synthesis.
-- Lazy generation (render a chapter on first open, cache forever) over rendering all 31,102 verses upfront.
+**Not yet rate-limited.** Worth adding if the URL ever spreads.
 
----
+### Service worker change (fixes a real bug)
+
+Rendered audio now lives in an **unversioned** `scripture-audio` cache, cache-first. The app-shell cache is still wiped on every deploy (that's how new CSS/JS reaches devices) — but audio survives it. Before this, every deploy would have silently re-downloaded the user's entire audio library.
+
+### Current state
+
+| Piece | Status |
+|---|---|
+| `AudioFileProvider` | ✅ shipped and verified live |
+| `render-audio.mjs` | ✅ working, resumable, prints cost before spending |
+| Psalm 23 (KJV, marin) in repo | ✅ live, confirmed good on device |
+| `tts` Edge Function | ✅ written, ❌ **not deployed** |
+| `scripture-audio` Storage bucket | ❌ **not created** |
+| `OPENAI_API_KEY` Edge secret | ❌ **not set** |
+
+**So: Psalm 23 plays in marin on the phone today. Every other chapter still falls back to the old voice** until the three ❌ items are done.
+
+### Remaining steps (all in the Supabase dashboard — no CLI needed)
+
+Homebrew install of the Supabase CLI wants Xcode Command Line Tools; the dashboard does both jobs and was the chosen path.
+
+1. **Storage → New bucket** → name exactly `scripture-audio` → **Public** → Create
+2. **Settings → Edge Functions → Secrets** → add `OPENAI_API_KEY`
+3. **Edge Functions → Deploy via Editor** → name exactly `tts` → paste `supabase/functions/tts/index.ts` → Deploy
+
+Bucket and function names are hardcoded in `voice.js`. Then verify by playing a verse outside Psalm 23.
+
+### Cost model
+
+~$0.06 per chapter, paid **once per verse ever**. Replays are free on any device forever. A chapter a day for a year ≈ $21. Whole Bible ≈ $70 (rejected).
+
+### Outstanding cleanup
+
+- **Rotate the OpenAI key** — it was displayed in a chat transcript on 2026-07-31 during setup. Nothing left the user's machine, but it should not live long-term.
+- **Rotate the Supabase service key** — still in git history from earlier work.
+- **The 14 Kokoro voices in the picker are misleading** — they silently fall back to Web Speech. Consider hiding them.
+
 
 ## Deploy Checklist (CRITICAL — 4 anchors, all together)
 
