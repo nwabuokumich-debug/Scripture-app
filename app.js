@@ -3427,27 +3427,32 @@ function openStackPicker() {
   const picker = document.createElement('div');
   picker.className = 'stack-picker';
 
-  if (stacks.length === 0) {
-    picker.innerHTML = `
-      <div class="stack-picker-empty">No stacks yet</div>
-      <button class="stack-picker-new">+ New Stack</button>
-    `;
-  } else {
-    picker.innerHTML =
-      stacks.map(s => `<div class="stack-picker-item" data-id="${escHtml(s.id)}">${escHtml(s.title)}</div>`).join('') +
-      `<div class="stack-picker-divider"></div>
-       <button class="stack-picker-new">+ New Stack</button>`;
-  }
+  // Header and "+ New Stack" sit outside the scroll area so they stay put
+  // however many stacks there are.
+  const body = stacks.length === 0
+    ? `<div class="stack-picker-empty">No stacks yet</div>`
+    : stacks.map(s => `<div class="stack-picker-item" data-id="${escHtml(s.id)}">${escHtml(s.title)}</div>`).join('');
+
+  picker.innerHTML = `
+    <div class="stack-picker-head">Add to stack</div>
+    <div class="stack-picker-scroll">${body}</div>
+    <button class="stack-picker-new">+ New Stack</button>
+  `;
 
   document.body.appendChild(picker);
   activePicker = picker;
 
   // Position above the current selection/action bar
   const barHeight = document.getElementById('selection-bar')?.offsetHeight ?? 72;
+  const gap = barHeight + 16;
   picker.style.position = 'fixed';
-  picker.style.bottom = `calc(${barHeight + 16}px + env(safe-area-inset-bottom))`;
+  picker.style.bottom = `calc(${gap}px + env(safe-area-inset-bottom))`;
   picker.style.left = '50%';
   picker.style.transform = 'translateX(-50%)';
+  // Anchored by its bottom edge, the list would otherwise grow straight off
+  // the top of the screen and clip the first stacks with no way to reach them.
+  picker.style.maxHeight =
+    `calc(100vh - ${gap}px - env(safe-area-inset-bottom) - env(safe-area-inset-top) - 28px)`;
 
   picker.querySelectorAll('.stack-picker-item').forEach(item => {
     item.addEventListener('click', e => {
@@ -3502,7 +3507,6 @@ function openStackSwitcher() {
           ${stack.id === activeStackId ? '<span class="stack-picker-check" aria-hidden="true">✓</span>' : ''}
         </button>
       `).join('')}
-      <div class="stack-picker-divider"></div>
       <button class="stack-picker-new" type="button">+ New Stack</button>
     </div>
   `;

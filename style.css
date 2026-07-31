@@ -2215,27 +2215,46 @@ body.theme-dark .verse-row.verse-speaking {
 /* ── Stack picker ─────────────────────────── */
 .stack-picker {
   position: fixed; z-index: 900;
+  display: flex; flex-direction: column;
   background: var(--bg); border: 1px solid var(--border);
-  border-radius: 14px; box-shadow: var(--shadow-lg);
-  min-width: 200px; overflow: hidden;
+  border-radius: 16px; box-shadow: var(--shadow-lg);
+  width: min(320px, calc(100vw - 32px));
+  overflow: hidden;
   animation: picker-in 0.14s ease;
 }
 @keyframes picker-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* Title and "+ New Stack" are pinned; only the list between them scrolls, so
+   the first stack is never stranded above the top of the screen. */
+.stack-picker-head {
+  flex: none;
+  padding: 13px 16px 11px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.stack-picker-scroll {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 4px 0;
+}
 .stack-picker-item {
-  padding: 10px 16px;
-  font-size: 0.92rem; color: var(--text);
+  padding: 11px 16px;
+  font-size: 0.92rem; line-height: 1.35; color: var(--text);
   cursor: pointer; transition: background 0.1s;
 }
 .stack-picker-item:active { background: var(--accent-light); color: var(--accent); }
-.stack-picker-empty { padding: 12px 16px; font-size: 0.88rem; color: var(--text-muted); }
-.stack-picker-divider { height: 1px; background: var(--border); margin: 2px 0; }
+.stack-picker-empty { padding: 14px 16px; font-size: 0.88rem; color: var(--text-muted); }
 .stack-picker-new {
+  flex: none;
   display: block; width: 100%;
-  background: none; border: none;
-  padding: 10px 16px; text-align: left;
+  background: var(--bg); border: none;
+  border-top: 1px solid var(--border);
+  padding: 13px 16px; text-align: left;
   font-family: var(--font-ui);
   font-size: 0.92rem; font-weight: 700;
   color: var(--accent); cursor: pointer;
