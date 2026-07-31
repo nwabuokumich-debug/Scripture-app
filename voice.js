@@ -1071,6 +1071,8 @@ class VoicePlayer {
     this._$('.voice-timer').addEventListener('click', () => this._cycleTimer());
     this._$('.voice-reload').addEventListener('click', () => this._reloadCurrent());
 
+    this._bindMediaSession();
+
     const seek = this._$('.voice-seek');
     seek.addEventListener('input', () => { this._scrubbing = true; this._paintSeekFill(); });
     seek.addEventListener('change', () => {
@@ -1195,6 +1197,38 @@ class VoicePlayer {
     label.textContent = fmtTime(Math.max(0, (this._timerEndsAt - Date.now()) / 1000));
   }
 
+  // Tell the OS this is a media session: lock-screen controls, headphone
+  // buttons, and a reason for iOS to keep the page alive while backgrounded.
+  _bindMediaSession() {
+    const ms = navigator.mediaSession;
+    if (!ms?.setActionHandler) return;
+    const eng = this.engine;
+    const safe = (name, fn) => { try { ms.setActionHandler(name, fn); } catch {} };
+    safe('play',          () => eng.resumeScripture());
+    safe('pause',         () => eng.pauseScripture());
+    safe('stop',          () => { this._clearTimer(); eng.stopScripture(); });
+    safe('previoustrack', () => eng.prev());
+    safe('nexttrack',     () => eng.next());
+    safe('seekbackward',  () => this._seekBy(-10));
+    safe('seekforward',   () => this._seekBy(10));
+  }
+
+  _updateMediaSession(ref, translation, state) {
+    const ms = navigator.mediaSession;
+    if (!ms) return;
+    try {
+      ms.playbackState = state;
+      if (ref && window.MediaMetadata) {
+        ms.metadata = new MediaMetadata({
+          title: ref,
+          artist: translation,
+          album: 'Scripture',
+          artwork: [{ src: './icon.svg', sizes: '512x512', type: 'image/svg+xml' }],
+        });
+      }
+    } catch {}
+  }
+
   // Re-fetch the current verse from scratch and play it again from the top.
   // For when a verse loads truncated, silent, or otherwise wrong.
   async _reloadCurrent() {
@@ -1290,6 +1324,7 @@ class VoicePlayer {
       btn.setAttribute('aria-label', isPaused ? 'Resume' : 'Pause');
     });
     this.el.classList.toggle('is-paused', isPaused);
+    this._updateMediaSession(refText, trans, !visible ? 'none' : (isPaused ? 'paused' : 'playing'));
 
     this._$('.voice-rate-val').textContent = `${eng.settings.rate.toFixed(1)}×`;
     this._$('.voice-delay-val').textContent = `${(eng.settings.repeatDelayMs / 1000).toFixed(1)}s`;
