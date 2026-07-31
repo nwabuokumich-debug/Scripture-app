@@ -896,6 +896,7 @@ const ICON = {
   clock: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12.5" r="7.5" stroke="currentColor" stroke-width="1.8"/><path d="M12 8.6v4.2l2.6 1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   timer: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="13.2" r="7.2" stroke="currentColor" stroke-width="1.8"/><path d="M12 9.6v3.6l2.4 1.5M9.6 3.4h4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   stop:  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2.4"/></svg>',
+  reload: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M19.6 4.6v4.2h-4.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   minimize: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 10 5 5 5-5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 
@@ -988,6 +989,11 @@ class VoicePlayer {
             </div>
           </div>
           <div class="voice-row">
+            <span class="voice-row-ico">${ICON.reload}</span>
+            <span class="voice-row-label">Audio</span>
+            <button class="voice-reload" type="button">Load again</button>
+          </div>
+          <div class="voice-row">
             <span class="voice-row-ico">${ICON.clock}</span>
             <span class="voice-row-label">Repeat delay</span>
             <div class="voice-stepper">
@@ -1063,6 +1069,7 @@ class VoicePlayer {
     this._$('.voice-select').addEventListener('change', e => eng.setVoice(e.target.value));
 
     this._$('.voice-timer').addEventListener('click', () => this._cycleTimer());
+    this._$('.voice-reload').addEventListener('click', () => this._reloadCurrent());
 
     const seek = this._$('.voice-seek');
     seek.addEventListener('input', () => { this._scrubbing = true; this._paintSeekFill(); });
@@ -1188,6 +1195,36 @@ class VoicePlayer {
     label.textContent = fmtTime(Math.max(0, (this._timerEndsAt - Date.now()) / 1000));
   }
 
+  // Re-fetch the current verse from scratch and play it again from the top.
+  // For when a verse loads truncated, silent, or otherwise wrong.
+  async _reloadCurrent() {
+    const eng = this.engine;
+    const item = eng.playlist[eng.index];
+    if (!item) return;
+
+    const btn = this._$('.voice-reload');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    const list = eng.playlist.slice();
+    const at = eng.index;
+    try {
+      await this.engine.provider.reload?.(item.ref);
+    } catch {}
+
+    btn.disabled = false;
+    btn.textContent = 'Load again';
+    // Restarting the playlist at the same index re-runs the whole resolve
+    // path, which now has nothing cached to fall back on.
+    eng.playScripture(list, { startIndex: at });
+  }
+
+  _activeTranslation() {
+    try { return (localStorage.getItem('active_translation') || 'kjv').toUpperCase(); }
+    catch { return 'KJV'; }
+  }
+
   _setExpanded(expanded) {
     const sheet = this._$('.voice-sheet');
     if (expanded) {
@@ -1234,8 +1271,12 @@ class VoicePlayer {
 
     const item = eng.playlist[eng.index];
     const refText = item ? item.ref : '';
+    // Always show which translation is being read. The audio follows the
+    // app's active translation, and several verses read identically across
+    // translations, so without this there is no way to tell them apart.
     const countText = eng.playlist.length > 1 ? `${eng.index + 1} of ${eng.playlist.length}` : '';
-    const subText = eng.statusLabel || countText;
+    const trans = this._activeTranslation();
+    const subText = eng.statusLabel || [countText, trans].filter(Boolean).join(' · ');
 
     this._$('.voice-ref').textContent = refText;
     this._$('.voice-sub').textContent = subText;
@@ -1304,7 +1345,8 @@ class AudioFileProvider {
     this._el = null;
     this._objectUrls = new Map();  // storage url -> blob object URL
     this._inflight = new Map();    // storage url -> Promise<objectURL>
-    this._misses = new Set();      // refs known unrenderable; don't retry all session
+    this._misses = new Set();      // `${translation}|${ref}` known unrenderable this session
+    this._bust = new Set();        // storage urls whose next fetch must skip the HTTP cache
     this._settle = null;
     this._fallbackHandle = null;
   }
@@ -1328,6 +1370,11 @@ class AudioFileProvider {
   _translation() {
     try { return localStorage.getItem('active_translation') || 'kjv'; } catch { return 'kjv'; }
   }
+
+  // Misses must be per translation. Keyed on ref alone, a verse that failed
+  // to render in one translation would be permanently skipped in every other
+  // one for the rest of the session.
+  _missKey(ref) { return `${this._translation()}|${ref}`; }
 
   _storageUrl(ref) {
     return `${AUDIO_BUCKET_URL}/${this._translation()}/${slugForRef(ref)}.mp3`;
@@ -1357,12 +1404,17 @@ class AudioFileProvider {
     if (this._objectUrls.has(url)) return Promise.resolve(this._objectUrls.get(url));
     if (this._inflight.has(url)) return this._inflight.get(url);
 
+    // After a reload the browser's own HTTP cache still holds the bad copy
+    // (Storage marks audio immutable for a year), so that fetch must bypass it.
+    const mode = this._bust.has(url) ? 'reload' : 'force-cache';
+    this._bust.delete(url);
+
     const job = (async () => {
       // 1. Repo-committed audio (no Supabase needed at all).
-      let res = await fetch(this._localUrl(ref), { cache: 'force-cache' }).catch(() => null);
+      let res = await fetch(this._localUrl(ref), { cache: mode }).catch(() => null);
 
       // 2. Storage — the normal path once a verse has ever been rendered.
-      if (!res?.ok) res = await fetch(url, { cache: 'force-cache' }).catch(() => null);
+      if (!res?.ok) res = await fetch(url, { cache: mode }).catch(() => null);
 
       if (!res?.ok) {
         // Not rendered yet — ask the Edge Function to make it, then re-fetch.
@@ -1406,7 +1458,7 @@ class AudioFileProvider {
     const ref = opts.item?.ref;
 
     // No ref (or a ref we already know has no audio) → straight to fallback.
-    if (!ref || !this._canPlay() || this._misses.has(ref)) {
+    if (!ref || !this._canPlay() || this._misses.has(this._missKey(ref))) {
       return this.fallback.speakChunk(text, opts);
     }
 
@@ -1417,7 +1469,7 @@ class AudioFileProvider {
       try {
         src = await this._resolve(ref);
       } catch {
-        this._misses.add(ref);
+        this._misses.add(this._missKey(ref));
         if (cancelled) return;
         opts.onStatus?.('');
         this._fallbackHandle = this.fallback.speakChunk(text, opts);
@@ -1469,8 +1521,52 @@ class AudioFileProvider {
   // doesn't stall between every verse.
   prefetch(text, opts = {}) {
     const ref = opts.item?.ref;
-    if (!ref || this._misses.has(ref) || !this._canPlay()) return;
+    if (!ref || this._misses.has(this._missKey(ref)) || !this._canPlay()) return;
     this._resolve(ref).catch(() => {});
+  }
+
+  // Throw away every cached copy of one verse and pull it down fresh.
+  //
+  // Covers two different failure modes. A truncated or half-written blob in
+  // the browser/service-worker cache is fixed by the purge alone. A bad
+  // render stored in Supabase needs `force`, which makes the Edge Function
+  // synthesize again and overwrite the object. `force` is ignored by older
+  // deployments of the function, in which case this still repairs local
+  // corruption — the common case.
+  async reload(ref) {
+    if (!ref) return false;
+    const url = this._storageUrl(ref);
+
+    const stale = this._objectUrls.get(url);
+    if (stale) { try { URL.revokeObjectURL(stale); } catch {} }
+    this._objectUrls.delete(url);
+    this._inflight.delete(url);
+    this._misses.delete(this._missKey(ref));
+
+    // The service worker serves audio cache-first, so its copy has to go too
+    // or the refetch below just hands back the same bad bytes.
+    this._bust.add(url);
+    try {
+      const cache = await caches.open('scripture-audio');
+      await cache.delete(url, { ignoreSearch: true });
+      await cache.delete(this._localUrl(ref), { ignoreSearch: true });
+    } catch {}
+
+    try {
+      await fetch(TTS_FUNCTION_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
+          'apikey': SUPABASE_PUBLIC_KEY,
+        },
+        body: JSON.stringify({
+          ref, translation: this._translation(), voice: AUDIO_VOICE, force: true,
+        }),
+      });
+    } catch {}
+
+    return true;
   }
 
   // Position within the current verse. Only file-backed playback can report

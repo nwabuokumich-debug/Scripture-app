@@ -2087,6 +2087,17 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   cursor: pointer;
 }
 
+.voice-reload {
+  flex: none;
+  padding: 8px 14px; border-radius: 11px;
+  background: var(--bg); border: 1px solid var(--border2);
+  color: var(--accent);
+  font-family: var(--font-ui); font-size: 0.78rem; font-weight: 700;
+  cursor: pointer; transition: background 0.12s, opacity 0.12s;
+}
+.voice-reload:active { background: var(--surface); }
+.voice-reload:disabled { opacity: 0.55; cursor: default; }
+
 .voice-seg {
   flex: none; display: flex; gap: 2px;
   background: var(--surface);

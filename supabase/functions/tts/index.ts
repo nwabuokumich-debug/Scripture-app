@@ -54,12 +54,15 @@ Deno.serve(async (req) => {
   const openaiKey = Deno.env.get('OPENAI_API_KEY');
   if (!openaiKey) return json({ error: 'OPENAI_API_KEY not configured' }, 500);
 
-  let body: { ref?: string; translation?: string; voice?: string };
+  let body: { ref?: string; translation?: string; voice?: string; force?: boolean };
   try { body = await req.json(); } catch { return json({ error: 'bad JSON' }, 400); }
 
   const ref = (body.ref || '').toString();
   const translation = (body.translation || 'kjv').toString().toLowerCase();
   const voice = (body.voice || DEFAULT_VOICE).toString();
+  // "Load again" in the player: re-synthesize and overwrite even when a copy
+  // is already stored, for when the stored render itself is bad.
+  const force = body.force === true;
 
   const parsed = parseRef(ref);
   if (!parsed) return json({ error: `unparseable ref: ${ref}` }, 400);
@@ -75,10 +78,12 @@ Deno.serve(async (req) => {
   const publicUrl = supabase.storage.from(BUCKET).getPublicUrl(objectPath).data.publicUrl;
 
   // Someone may have rendered it between the client's probe and now.
-  const { data: existing } = await supabase.storage
-    .from(BUCKET)
-    .list(translation, { search: `${slugForRef(ref)}.mp3`, limit: 1 });
-  if (existing?.length) return json({ url: publicUrl, cached: true });
+  if (!force) {
+    const { data: existing } = await supabase.storage
+      .from(BUCKET)
+      .list(translation, { search: `${slugForRef(ref)}.mp3`, limit: 1 });
+    if (existing?.length) return json({ url: publicUrl, cached: true });
+  }
 
   // Take the text from the database, never from the request. This function
   // spends money and is publicly callable, so it must only ever be able to
