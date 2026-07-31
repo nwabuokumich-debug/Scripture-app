@@ -6,3 +6,7 @@ clear.js
 clear-greek.js
 schema.sql
 .claude/
+
+# Local secrets and rendered audio
+.env.local
+audio-out/

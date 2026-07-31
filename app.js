@@ -1,5 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { Voice, initVoice } from './voice.js?v=9';
+import { Voice, initVoice } from './voice.js?v=11';
 
 // ── Init ─────────────────────────────────────────────
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

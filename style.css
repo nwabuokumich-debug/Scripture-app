@@ -1915,30 +1915,61 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   transform: rotate(0deg);
   transition: transform 0.2s ease;
 }
-.voice-bar.expanded .voice-expand-toggle { transform: rotate(180deg); }
+/* When the full panel is open, the mini row is redundant — hide it so the
+   reference and play/pause aren't shown twice. */
+.voice-bar.expanded .voice-compact { display: none; }
 
 /* Expanded full player */
-.voice-expanded { margin-top: 4px; }
+.voice-expanded { display: flex; flex-direction: column; gap: 16px; }
 .voice-expanded[hidden] { display: none; }
-.voice-main { display: flex; align-items: center; gap: 8px; }
+
 .voice-btn {
   flex: none; width: 44px; height: 44px;
   display: flex; align-items: center; justify-content: center;
   background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
   color: #fff; border-radius: 14px; font-size: 1.05rem; line-height: 1;
-  cursor: pointer; transition: background 0.12s, border-color 0.12s;
+  cursor: pointer; transition: background 0.12s, border-color 0.12s, transform 0.1s;
 }
-.voice-btn:active { background: rgba(255,255,255,0.2); }
+.voice-btn:active { background: rgba(255,255,255,0.2); transform: scale(0.96); }
+
+/* Header: reference on the left, a clear minimize chevron on the right. */
+.voice-header { display: flex; align-items: center; gap: 12px; padding: 2px 2px 0; }
+.voice-label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.voice-ref { font-size: 1.05rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-sub { font-size: 0.76rem; opacity: 0.6; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-collapse {
+  flex: none; width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255,255,255,0.06); font-size: 0.7rem;
+}
+
+/* Centered transport with a single prominent play/pause. */
+.voice-transport { display: flex; align-items: center; justify-content: center; gap: 28px; padding: 2px 0; }
+.voice-prev, .voice-next {
+  width: 54px; height: 54px; border-radius: 50%;
+  background: transparent; border-color: transparent; font-size: 1.45rem; opacity: 0.9;
+}
+.voice-prev:active, .voice-next:active { background: rgba(255,255,255,0.12); }
 .voice-toggle {
-  background: var(--accent); border-color: transparent;
-  width: 50px; height: 50px; font-size: 1.2rem;
+  width: 68px; height: 68px; border-radius: 50%;
+  background: var(--accent); border-color: transparent; font-size: 1.55rem;
+  box-shadow: 0 10px 26px rgba(231,66,82,0.4);
 }
 .voice-toggle:active { background: var(--accent-h); }
-.voice-label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 0 4px; overflow: hidden; }
-.voice-ref { font-size: 0.9rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.voice-sub { font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
-.voice-bar.tray-open .voice-tray-toggle { background: rgba(255,255,255,0.2); }
-.voice-tray { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+/* Settings, always visible inside the panel. */
+.voice-tray {
+  display: flex; flex-direction: column; gap: 12px;
+  padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Full-width stop = the obvious "end & dismiss" action. */
+.voice-stop {
+  width: 100%; height: 48px; border-radius: 14px;
+  background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.16);
+  color: #fff; font-family: var(--font-ui); font-size: 0.92rem; font-weight: 700;
+  letter-spacing: 0.01em; cursor: pointer; transition: background 0.12s;
+}
+.voice-stop:active { background: rgba(255,255,255,0.16); }
 .voice-tray-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .voice-tray-label { font-size: 0.82rem; font-weight: 600; opacity: 0.85; }
 .voice-stepper { display: flex; align-items: center; gap: 6px; }

@@ -734,6 +734,7 @@ class VoiceEngine {
     const { promise } = this.provider.speakChunk(item.text, {
       voiceId: this.settings.voiceId,
       rate: this.settings.rate,
+      item,                                  // providers keyed by verse ref need this
       onStatus: label => {
         if (myToken !== this.token) return;
         this.statusLabel = label || '';
@@ -742,10 +743,10 @@ class VoiceEngine {
     });
     this._startHeartbeat();
 
-    // Prefetch the next verse's audio so Kokoro playback is gapless.
+    // Prefetch the next verse's audio so playback is gapless.
     const nextItem = this.playlist[i + 1];
     if (nextItem && this.provider.prefetch) {
-      try { this.provider.prefetch(nextItem.text, { voiceId: this.settings.voiceId, rate: this.settings.rate }); } catch {}
+      try { this.provider.prefetch(nextItem.text, { voiceId: this.settings.voiceId, rate: this.settings.rate, item: nextItem }); } catch {}
     }
 
     const settle = (errored) => {
@@ -903,18 +904,19 @@ class VoicePlayer {
         <button class="voice-btn voice-expand-toggle" type="button" aria-label="Expand player" aria-expanded="false">▲</button>
       </div>
       <div class="voice-expanded" hidden>
-        <div class="voice-main">
-          <button class="voice-btn voice-prev" type="button" aria-label="Previous verse">⏮</button>
-          <button class="voice-btn voice-toggle" type="button" aria-label="Pause" aria-pressed="true">⏸</button>
-          <button class="voice-btn voice-stop" type="button" aria-label="Stop">⏹</button>
-          <button class="voice-btn voice-next" type="button" aria-label="Next verse">⏭</button>
+        <div class="voice-header">
           <div class="voice-label" aria-live="polite">
             <span class="voice-ref"></span>
             <span class="voice-sub"></span>
           </div>
-          <button class="voice-btn voice-tray-toggle" type="button" aria-label="Playback options" aria-expanded="false">⚙</button>
+          <button class="voice-btn voice-collapse" type="button" aria-label="Minimize player">▼</button>
         </div>
-        <div class="voice-tray" hidden>
+        <div class="voice-transport">
+          <button class="voice-btn voice-prev" type="button" aria-label="Previous verse">⏮</button>
+          <button class="voice-btn voice-toggle" type="button" aria-label="Pause" aria-pressed="true">⏸</button>
+          <button class="voice-btn voice-next" type="button" aria-label="Next verse">⏭</button>
+        </div>
+        <div class="voice-tray">
           <div class="voice-tray-row">
             <span class="voice-tray-label">Speed</span>
             <div class="voice-stepper">
@@ -944,6 +946,7 @@ class VoicePlayer {
             </div>
           </div>
         </div>
+        <button class="voice-stop" type="button">Stop reading</button>
       </div>
     `;
     document.body.appendChild(el);
@@ -970,14 +973,7 @@ class VoicePlayer {
     this._$('.voice-next').addEventListener('click', () => eng.next());
 
     this._$('.voice-expand-toggle').addEventListener('click', () => this._setExpanded(true));
-
-    this._$('.voice-tray-toggle').addEventListener('click', () => {
-      const tray = this._$('.voice-tray');
-      const open = tray.hasAttribute('hidden');
-      if (open) tray.removeAttribute('hidden'); else tray.setAttribute('hidden', '');
-      this.el.classList.toggle('tray-open', open);
-      this._$('.voice-tray-toggle').setAttribute('aria-expanded', String(open));
-    });
+    this._$('.voice-collapse').addEventListener('click', () => this._setExpanded(false));
 
     this._$('.voice-rate-down').addEventListener('click', () => eng.setPlaybackRate(eng.settings.rate - RATE_STEP));
     this._$('.voice-rate-up').addEventListener('click',   () => eng.setPlaybackRate(eng.settings.rate + RATE_STEP));
@@ -1007,10 +1003,6 @@ class VoicePlayer {
       expandedEl.setAttribute('hidden', '');
       this.el.classList.remove('expanded');
       this._$('.voice-expand-toggle').setAttribute('aria-expanded', 'false');
-      // Also collapse the settings tray so it’s fresh next time.
-      this._$('.voice-tray').setAttribute('hidden', '');
-      this.el.classList.remove('tray-open');
-      this._$('.voice-tray-toggle').setAttribute('aria-expanded', 'false');
     }
   }
 
@@ -1078,8 +1070,220 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+// ── Provider: pre-rendered audio files (OpenAI TTS, cached in Storage) ───
+// A verse that has been rendered before is a plain CDN fetch — instant, free,
+// and identical every time. A verse nobody has played yet is rendered once by
+// the `tts` Edge Function (which holds the API key), stored, and then behaves
+// like every other cached verse forever after.
+//
+// Anything that fails — offline, function down, verse missing — falls through
+// to the wrapped provider so playback never simply dies.
+// config.js is a classic script loaded before app.js, so this is a global.
+// typeof-guarded so the module still parses if it's ever loaded standalone.
+const SUPABASE_PROJECT_URL = (typeof SUPABASE_URL === 'string' && SUPABASE_URL) || '';
+const AUDIO_BUCKET_URL = `${SUPABASE_PROJECT_URL}/storage/v1/object/public/scripture-audio`;
+const TTS_FUNCTION_URL = `${SUPABASE_PROJECT_URL}/functions/v1/tts`;
+const AUDIO_VOICE = 'marin';
+const RENDER_TIMEOUT_MS = 30000;
+
+// Must match slugForRef() in render-audio.mjs and the Edge Function.
+function slugForRef(ref) {
+  return String(ref).trim().replace(/\s+/g, '-').replace(/:/g, '-');
+}
+
+class AudioFileProvider {
+  constructor(fallback) {
+    this.name = 'audiofile';
+    this.defaultVoiceLabel = 'Marin (recorded)';
+    this.needsHeartbeat = false;   // a real <audio> element needs no keep-alive
+    this.fallback = fallback;
+    this._el = null;
+    this._objectUrls = new Map();  // storage url -> blob object URL
+    this._inflight = new Map();    // storage url -> Promise<objectURL>
+    this._misses = new Set();      // refs known unrenderable; don't retry all session
+    this._settle = null;
+    this._fallbackHandle = null;
+  }
+
+  isSupported() {
+    return this._canPlay() || !!this.fallback?.isSupported();
+  }
+
+  _canPlay() {
+    return typeof window !== 'undefined'
+      && typeof Audio === 'function'
+      && typeof fetch === 'function'
+      && !!window.URL?.createObjectURL;
+  }
+
+  // The voice picker still belongs to the fallback chain — those voices apply
+  // to anything this provider can't serve.
+  getVoices(...args) { return this.fallback.getVoices(...args); }
+  onVoiceSelected(...args) { return this.fallback.onVoiceSelected?.(...args); }
+
+  _translation() {
+    try { return localStorage.getItem('active_translation') || 'kjv'; } catch { return 'kjv'; }
+  }
+
+  _storageUrl(ref) {
+    return `${AUDIO_BUCKET_URL}/${this._translation()}/${slugForRef(ref)}.mp3`;
+  }
+
+  // Audio committed to the repo, served straight off GitHub Pages. Lets a
+  // rendered chapter work with no Supabase setup at all.
+  _localUrl(ref) {
+    return `./audio/${this._translation()}/${slugForRef(ref)}.mp3`;
+  }
+
+  // One <audio> element for the whole session. iOS only unlocks playback on a
+  // user gesture, and the unlock is per-element — reusing it is what lets
+  // verse 2 onward play without another tap.
+  _element() {
+    if (!this._el) {
+      this._el = new Audio();
+      this._el.preload = 'auto';
+      this._el.crossOrigin = 'anonymous';
+    }
+    return this._el;
+  }
+
+  // Resolve a ref to a playable object URL: try Storage, then render on miss.
+  _resolve(ref) {
+    const url = this._storageUrl(ref);
+    if (this._objectUrls.has(url)) return Promise.resolve(this._objectUrls.get(url));
+    if (this._inflight.has(url)) return this._inflight.get(url);
+
+    const job = (async () => {
+      // 1. Repo-committed audio (no Supabase needed at all).
+      let res = await fetch(this._localUrl(ref), { cache: 'force-cache' }).catch(() => null);
+
+      // 2. Storage — the normal path once a verse has ever been rendered.
+      if (!res?.ok) res = await fetch(url, { cache: 'force-cache' }).catch(() => null);
+
+      if (!res?.ok) {
+        // Not rendered yet — ask the Edge Function to make it, then re-fetch.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), RENDER_TIMEOUT_MS);
+        try {
+          const gen = await fetch(TTS_FUNCTION_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ref, translation: this._translation(), voice: AUDIO_VOICE }),
+            signal: ctrl.signal,
+          });
+          if (!gen.ok) throw new Error(`tts ${gen.status}`);
+          const { url: rendered } = await gen.json();
+          res = await fetch(rendered || url);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      if (!res?.ok) throw new Error(`audio unavailable for ${ref}`);
+      // A host that serves an HTML 404 page with a 200 status would otherwise
+      // produce a blob that only fails later, inside the audio element.
+      if (!/^audio\//i.test(res.headers.get('content-type') || '')) {
+        throw new Error(`not audio for ${ref}`);
+      }
+      const objectUrl = URL.createObjectURL(await res.blob());
+      this._objectUrls.set(url, objectUrl);
+      return objectUrl;
+    })().finally(() => this._inflight.delete(url));
+
+    this._inflight.set(url, job);
+    return job;
+  }
+
+  speakChunk(text, opts = {}) {
+    const ref = opts.item?.ref;
+
+    // No ref (or a ref we already know has no audio) → straight to fallback.
+    if (!ref || !this._canPlay() || this._misses.has(ref)) {
+      return this.fallback.speakChunk(text, opts);
+    }
+
+    let cancelled = false;
+
+    const promise = (async () => {
+      let src;
+      try {
+        src = await this._resolve(ref);
+      } catch {
+        this._misses.add(ref);
+        if (cancelled) return;
+        opts.onStatus?.('');
+        this._fallbackHandle = this.fallback.speakChunk(text, opts);
+        return this._fallbackHandle.promise;
+      }
+      if (cancelled) return;
+      opts.onStatus?.('');
+      return this._play(src, opts.rate);
+    })();
+
+    // A first-time verse takes a few seconds to render; say so rather than
+    // sitting silent.
+    if (!this._objectUrls.has(this._storageUrl(ref))) opts.onStatus?.('Preparing audio…');
+
+    return {
+      promise,
+      cancel: () => {
+        cancelled = true;
+        try { this._fallbackHandle?.cancel(); } catch {}
+        this._fallbackHandle = null;
+        this._stopElement();
+      },
+    };
+  }
+
+  _play(src, rate = 1) {
+    const el = this._element();
+    return new Promise((resolve, reject) => {
+      this._settle = { resolve, reject };
+      const done = (fn) => (...a) => { this._settle = null; el.onended = el.onerror = null; fn(...a); };
+      el.onended = done(resolve);
+      el.onerror = done(() => reject(new Error('audio element error')));
+      el.src = src;
+      el.playbackRate = rate || 1;
+      el.play().catch(done(reject));
+    });
+  }
+
+  _stopElement() {
+    const el = this._el;
+    if (!el) return;
+    el.onended = el.onerror = null;
+    try { el.pause(); } catch {}
+    try { el.removeAttribute('src'); el.load(); } catch {}
+    this._settle = null;
+  }
+
+  // Warm the next verse while the current one plays, so a first-time chapter
+  // doesn't stall between every verse.
+  prefetch(text, opts = {}) {
+    const ref = opts.item?.ref;
+    if (!ref || this._misses.has(ref) || !this._canPlay()) return;
+    this._resolve(ref).catch(() => {});
+  }
+
+  pause() {
+    if (this._fallbackHandle) return this.fallback.pause();
+    try { this._el?.pause(); } catch {}
+  }
+
+  resume() {
+    if (this._fallbackHandle) return this.fallback.resume();
+    try { this._el?.play?.().catch(() => {}); } catch {}
+  }
+
+  cancel() {
+    try { this.fallback.cancel(); } catch {}
+    this._fallbackHandle = null;
+    this._stopElement();
+  }
+}
+
 // ── Singleton wiring ─────────────────────────────────────────────────────
-const provider = new KokoroProvider(new WebSpeechProvider());
+const provider = new AudioFileProvider(new KokoroProvider(new WebSpeechProvider()));
 const engine = new VoiceEngine(provider);
 let player = null;
 
