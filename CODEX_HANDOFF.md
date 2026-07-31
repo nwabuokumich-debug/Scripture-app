@@ -1,294 +1,242 @@
-# Scripture App — Codex Handoff Document
+# Scripture App — Handoff Document
 
-## Current Status
-
-- Repo branch: `main`
-- **Local commit `a2011a7` exists but is NOT pushed.** It bundles Voice Mode + the book-sheet/dev-server work (they share files, so they couldn't be split). User chose "commit locally only."
-- **Plus further uncommitted changes on top of `a2011a7`** — Voice Mode quality work, including Web Speech auto-pick improvements and a Kokoro.js experiment. Nothing pushed; user tests on localhost + phone/laptop.
-- **Important current reality:** the Kokoro experiment is **not working for the user**. User selected `Kokoro Heart` on laptop, waited about 10 minutes on `Generating Kokoro audio...`, and never heard audio. Do not present Kokoro as solved or ask the user to keep waiting. Treat Kokoro as experimental/failed in this app unless explicitly asked to debug it further.
-- Current cache/version values in working tree:
-  - `sw.js`: `const CACHE = 'scripture-v101'`
-  - `index.html`: `app.js?v=94`
-  - `index.html`: `style.css?v=101`
-  - `app.js` line 2: `import … from './voice.js?v=6'` — **4th cache-buster anchor**. `voice.js` is an ES module imported by app.js; its version lives in this import specifier, not index.html. Bump it whenever `voice.js` changes (and bump app.js's `?v=` too, since app.js text changes with it). See memory `feedback_cache_busters.md`.
-- Last pushed commit on `main` (everything below predates Voice Mode):
-  - `2726213` `Let strong semantic matches outrank shallow keyword hits`
-  - `ef93a8e` `Allow smaller embedding upload batches`
-  - `7338b4f` `Rank semantic search across translations`
-
-> **To deploy Voice Mode to the phone:** push `main` (this sends `a2011a7` + whatever is committed after it) → GitHub Pages → clear cache on device. Confirm with the user before pushing (the commit bundles two features).
+_Last updated: 2026-07-31_
 
 ---
 
-## Scripture Voice Mode (committed locally in `a2011a7`; quality work uncommitted on top)
+## Current Status (read this first)
 
-Hands-free, on-device text-to-speech for verses, selections, whole chapters, and Stack cards. The automatic default is now the browser **Web Speech API** (`speechSynthesis`) for instant playback. **Kokoro.js** (`onnx-community/Kokoro-82M-v1.0-ONNX` via jsDelivr, WASM/q8 first pass) is still present as explicit voices in the picker, but the real-user test failed: it stalled on generation and produced no audible output. Architected so a paid provider can still be swapped in later without touching the UI.
+- Repo branch: `main`. **145 commits.** Last commit `12bbfde` (2026-06-17).
+- **There is ~6 weeks of uncommitted, unpushed work in the tree.** Last commit was June 17; today is July 31. Nothing since June has reached the user's phone.
+- The active problem is **voice quality**, not voice plumbing. Playback works; it sounds mechanical.
 
-### Files
-- **New `voice.js`** — the whole subsystem (dedicated module, imported by app.js):
-  - `KokoroProvider` — experimental wrapper. `Automatic` routes to Web Speech/system voice. Explicit Kokoro voices route through `kokoro-worker.js`, which dynamically imports `kokoro-js@1.2.1/dist/kokoro.web.js`, loads `onnx-community/Kokoro-82M-v1.0-ONNX` with WASM/q8, generates one verse audio buffer per chunk, and plays via an already-unlocked `AudioContext`. This path is currently **not validated** and failed for the user.
-  - `WebSpeechProvider` — fallback provider and system voice picker. Interface: `isSupported()`, `getVoices()`, `speakChunk(text,{voiceId,rate}) -> {promise,cancel}`, `pause()/resume()/cancel()`. A future `ElevenLabsProvider`/`OpenAIProvider` implements the same shape; swap one line, no UI changes.
-  - `VoiceEngine` — provider-agnostic playlist + repeat (`none|verse|passage`) + repeat-delay + state machine (`idle|playing|paused`). Uses a **session token** (bumped on every stop/new-play) so stale async callbacks no-op; an **error-streak guard** prevents a tight loop if synthesis errors during Verse repeat; a `pause()/resume()` **heartbeat** keeps long utterances alive (Chrome/iOS ~15s cutoff) and is cleared on stop/pause/end; handles iOS flaky-pause (utterance ending mid-pause → resume advances instead of hanging).
-  - `VoicePlayer` — a single persistent `#voice-bar` floating player (built once, handlers bound once → no listener/DOM leaks). Transport (⏮ ⏯ ⏹ ⏭) + chevron tray (speed stepper, voice `<select>`, repeat pills, delay stepper).
-  - Persists `voice_settings` in localStorage (`{voiceId, rate, repeatMode, repeatDelayMs}`).
-  - Exports `Voice` singleton + `initVoice({onItemStart,onStateChange})`.
-- **`app.js`** — integration only (no voice logic): imports `Voice`/`initVoice`; `initVoice` wires the verse-highlight callback; **all Play UI is feature-gated on `Voice.isSupported`**. Play affordances added in 4 places: verse-action bar (`updateSelectionBar`), search results (`doSearch`), stack cards (`renderStackView`), chapter hero (`renderVerses`, "Listen" pill). `Voice.stopScripture()` called on navigation: `selectChapter`, `openBibleLocation`, `setMode` (mode change), `openStack` (different stack); translation change funnels through `selectChapter`, so it's covered.
-- **`kokoro-worker.js`** — experimental Web Worker for Kokoro model loading/generation. Added after main-thread generation appeared to freeze on `Generating Kokoro audio...`; still did not produce confirmed audible output for the user.
-- **`style.css`** — `.voice-bar` block (dark in both themes, mirrors `.selection-bar`) + tray controls; `.verse-speaking` now-playing highlight (reuses selection palette, dark variant); `.sel-actions-4` (verse-action 2×2 grid); `.result-play-btn`/`.result-actions`; `.reader-play-btn`; `.listen-card-btn` folded into the existing card-action selector groups (light + dark). Respects `prefers-reduced-motion`.
+### Uncommitted changes in the working tree
 
-### Verification done (this session)
-`node --check` (`voice.js`, `app.js`, `kokoro-worker.js`) ✓ after Kokoro worker integration. Previous pre-Kokoro checks: headless Chrome boot — `#voice-bar` + all controls created, app boots ✓; Node engine-logic harness 12/12 (no-repeat, verse/passage repeat, stop, blank-skip, pause/resume incl. ended-while-paused, settings persistence + rate clamp) ✓. **Real-user Kokoro audio test failed**: user waited ~10 minutes on laptop at `Generating Kokoro audio...` for `Kokoro Heart` and never heard playback.
+A **redesign of the expanded Voice Mode player** — appears complete, never verified on device:
 
-### Known limitations
-- Kokoro first use downloads the model in-browser and may take noticeable time, especially on phone.
-- iOS pauses TTS/audio when the screen locks / tab backgrounds (platform constraint).
+| File | Change |
+|---|---|
+| `voice.js` | Restructured expanded panel: new `.voice-header` (reference + minimize chevron), centered `.voice-transport` (⏮ / big play / ⏭), settings tray now **always visible** (the ⚙ `.voice-tray-toggle` and its handler were deleted), full-width **"Stop reading"** button at the bottom. |
+| `style.css` | 68px accent play button with glow shadow, 54px transparent prev/next, mini compact row hidden while expanded. |
+| `index.html` | `style.css?v=103` → `104` |
+| `sw.js` | `scripture-v105` → `v106` |
+| `app.js` | `./voice.js?v=9` → `?v=10` |
+
+**⚠️ Cache-buster gap:** `app.js?v=96` in `index.html:262` was **not** bumped, but `app.js` text *did* change (the import line). Bump it to `97` before pushing or phones will serve the old `app.js` and keep importing `voice.js?v=9`.
+
+Untracked scratch files (not part of any feature): `__voice-preview.html` (standalone harness for eyeballing the voice bar without booting the app), `tmp-diligence-search.mjs` (one-off Supabase scan for diligence/sloth/idleness verses).
+
+---
+
+## Project Timeline
+
+### Phase 1 — Foundation (2026-03-29 → 03-30)
+Initial PWA shell, GitHub Pages deployment, service-worker path wars (added → removed → self-destructing → network-first). Mobile sizing, touch targets, safe areas. Sidebar interaction. Long-press drag-to-reorder for stack cards — rewritten four times before landing on a transform-based animation.
+
+### Phase 2 — Stacks & multi-verse (2026-04-01)
+Multi-verse selections stored as **separate passages** rather than one text blob, with an auto-migration for old cards. Stack card verse layout matched to the Bible reader.
+
+### Phase 3 — Translations & compare (2026-04-07 → 04-09)
+Grew from KJV-only to **18 translations** (BSB, YLT, ASV, BBE, NHEB, Jubilee, LEB, Rotherham, WEB, Darby, Webster, DRA, AKJV, UKJV, LITV, MKJV, CPDV). Dropdown translation picker replaced tap-to-cycle. Compare-translations feature, then stack block compare. Spring animations on all sheets.
+
+### Phase 4 — Reader interaction (2026-04-08 → 04-09)
+Hard-press/long-press verse action mode. Native iOS text selection suppressed. Selection grouping classes (`selected-start`/`middle`/`end`) so adjacent verses render as one continuous highlight. Haptic helper.
+
+### Phase 5 — Mobile shell redesign (2026-04-18 → 04-29)
+Mobile-first app shell. Book sheet with drag-to-dismiss and midpoint snapping. Scroll-direction chrome hiding. Scroll preservation across phone sleep/resume. Bible reader converted to **one `.scripture-card` per chapter** with `.verse-row` children — do not reintroduce per-verse cards.
+
+### Phase 6 — Accounts & sync (2026-04-24)
+Supabase Auth sign-in/up/out, `user_stack_state` table with per-user RLS, stack import/export, stack switcher, admin CLI.
+
+### Phase 7 — Semantic search (2026-05-01 → 05-02)
+The largest technical build. In-browser Transformers.js (`all-MiniLM-L6-v2`) embeds the query → pgvector HNSW similarity in Supabase → hybrid rerank against keyword candidates. Made translation-aware (KJV + BSB embeddings, 31,102 rows each). Phrase-aware boosts added so remembered wording surfaces the right verse. Final tuning let strong semantic matches outrank shallow keyword overlap.
+
+**Verified:** query `Saul threw a spear at Jonathan` returns `1 Samuel 20:33` as result #1.
+
+### Phase 8 — Voice Mode (2026-06-04 → 06-17, and ongoing)
+See below. Four commits, then the current uncommitted redesign.
+
+### Gap: 2026-06-17 → 07-31
+No commits. Work resumed 07-31 on the voice-quality question.
+
+---
+
+## Voice Mode — where it actually stands
+
+Hands-free TTS for verses, selections, chapters, and Stack cards.
+
+### Architecture (this part is good — build on it)
+
+`voice.js` is **provider-abstracted**. The bottom line is literally:
+
+```js
+const provider = new KokoroProvider(new WebSpeechProvider());   // voice.js:1073
+const engine   = new VoiceEngine(provider);
+```
+
+The provider interface is the swap seam:
+
+```
+isSupported() · getVoices() · speakChunk(text,{voiceId,rate}) -> {promise,cancel}
+pause() · resume() · cancel() · prefetch?() · onVoiceSelected?()
+```
+
+Anything implementing that shape drops in **without touching the UI**. `VoiceEngine` (playlist, repeat modes, delay, state machine) and `VoicePlayer` (the floating `#voice-bar`) are provider-agnostic.
+
+Engine hardening already done: session token invalidates stale async callbacks; error-streak guard prevents tight loops; pause/resume heartbeat keeps long utterances alive past Chrome/iOS ~15s cutoff; handles iOS flaky-pause.
+
+### Provider 1 — WebSpeechProvider (works, sounds bad)
+
+Uses the OS `speechSynthesis`. Auto-picks the best installed English voice via `_score()` — boosts en-US/Premium/Enhanced/Neural/Google/Microsoft, heavily demotes novelty voices (Albert, Zarvox). On the user's Mac the best available is **Samantha** (no Premium/Enhanced voices installed).
+
+**This is what the user is hearing, and it is the complaint.** "Sounds too mechanical."
+
+### Provider 2 — KokoroProvider (in the code, effectively failed)
+
+`onnx-community/Kokoro-82M-v1.0-ONNX` via `kokoro-worker.js`, WASM/q8. 14 voices in the picker.
+
+**Never produced audible output for the user.** Earlier test: selected `Kokoro Heart` on laptop, waited ~10 minutes on "Generating Kokoro audio…", heard nothing. Multiple rounds of fixes (worker thread, timeouts, status text, background warming, per-chunk fallback) did not resolve it.
+
+It falls back to Web Speech silently in several places — `voice.js:274-290` (model not ready), `voice.js:317` (generation failed), 60s generation timeout. **Net effect: the user believes they are using Kokoro but hears Web Speech.**
+
+Practical constraint: ~80MB model download running in WASM inside an iOS PWA. Do not keep debugging this unless explicitly asked.
+
+### Known limitations (platform, not bugs)
+- iOS pauses TTS/audio when the screen locks or the tab backgrounds.
 - Rate/voice changes apply to the **next** utterance, not the in-flight one.
-- "Repeat indefinitely" is realized as Verse/Passage looping until Stop (no fixed-count repeat was requested).
-- Kokoro should be considered non-working UX for now. It may work as a model in other environments, but in this app/browser path it has not reached audible playback for the user.
-
-### Voice quality — current state (uncommitted, on top of `a2011a7`)
-The user's first reaction was that the default voice "sounds disgusting." Root cause: the browser was using the OS default voice, and the user's Mac has **only the basic/novelty voices installed (no Premium/Enhanced)** — best available is "Samantha."
-
-**Already done (uncommitted, in `voice.js`):**
-- `WebSpeechProvider` now **auto-picks the best installed English voice** instead of the platform default — added `_score(v)` (boosts en-US, Premium/Enhanced/Neural, Google/Microsoft/known-good names; heavily demotes novelty voices like Albert/Zarvox) and `_pickPreferred()`. `_resolve('')` now returns the preferred voice, not `null`.
-- The player's voice list is **sorted best-first**, and the empty option is relabeled "Automatic (best available)".
-- Net effect: it now uses Samantha by default on this Mac (much better than the novelty default), and will auto-use any Enhanced voice the user downloads.
-- `KokoroProvider` wraps the voice system, but `Automatic` now routes to system TTS (`Automatic (system voice)`) for immediate playback. Kokoro voices remain available explicitly in the existing voice picker, with English system fallback voices labeled `System: ...`.
-- Kokoro loading/generation now runs in `kokoro-worker.js` instead of the main UI thread. This prevents the tray from freezing on "Generating Kokoro audio..." and lets the main-thread timeout actually fire.
-- If Kokoro import/model load/generation/audio playback fails, it falls back to Web Speech for that chunk instead of leaving playback dead.
-- Kokoro load now has a 25s timeout and generation has a 15s timeout. On timeout it uses the system voice and keeps the Kokoro model promise warming in the background; subsequent attempts use system voice immediately for a 2-minute cooldown unless Kokoro finishes loading.
-- Automatic system playback also warms Kokoro quietly in the background when possible, so users can try a Kokoro voice later without making the default Play button hang.
-- Status text now distinguishes loading code, downloading model, downloading percentage, generating audio, and system fallback instead of sitting on "Preparing Kokoro voice...".
-- Kokoro is currently forced through WASM/q8 for a smaller first mobile test. WebGPU can be tested later if quality is good but latency is too high.
-- **Result after all of the above:** still no audible Kokoro output in the user's test. The user is frustrated and explicitly asked why they have not heard it once. Do not keep iterating on Kokoro unless the user asks. The pragmatic next choices are: keep Web Speech/system voice only, or implement a cloud TTS provider behind the same seam.
-
-**The user is still unhappy with Web Speech quality and asked for better options. Research done (June 2026) — provider options for the swap seam:**
-
-| Option | Sound | ~Cost/chapter (~4k chars) | Free/month | Setup |
-|---|---|---|---|---|
-| **Kokoro 82M** (open-source, in-browser via Transformers.js) | Very good (#1 free, TTS-Arena Elo ~1056) | **$0** | Unlimited | **No key**; ~80 MB one-time model download |
-| Enhanced system voices | OK | $0 | Unlimited | user downloads in OS settings |
-| Google Neural2 | Great | ~$0.06 | ~250 ch free | cloud, key + proxy |
-| OpenAI tts-1 / 4o-mini-tts | Great | ~$0.06 | $5 trial only | cloud, key + proxy |
-| Azure Neural | Great | ~$0.06 | ~125 ch free | cloud, key + proxy |
-| Cartesia Sonic | Great, fast | ~$0.14 | ~5 ch once | cloud, key + proxy |
-| ElevenLabs v2/v3 | Best | ~$0.44–0.88 | ~2–3 ch | cloud, key + proxy |
-
-**Kokoro path was chosen for first trial and effectively failed for this app UX.** Recommended next step: stop presenting Kokoro as the answer. Either remove/hide Kokoro voices and keep improved Web Speech, or implement a cloud TTS provider. For any **cloud/paid** provider: `speakChunk` fetches audio → plays via `Audio`/`AudioContext`, and the API key MUST be server-side (proxy via `server.js` or a Supabase Edge Function), never in the browser.
+- Repeat is verse/passage looping until Stop (no fixed-count repeat).
 
 ---
 
-## Uncommitted Work — Book Sheet Expansion / Local Dev Server
+## What We're Doing Now (2026-07-31)
 
-### Files Modified
-- `app.js` — added expandable book list in sheet with inline chapter grid
-- `index.html` — bumped cache-buster versions
-- `style.css` — new styles for book expansion UI
-- `sw.js` — bumped cache name to v95
-- `package.json` — added `start` and `dev` scripts pointing to `server.js`
-- `manifest.json` — changed `start_url` and `scope` from `/Scripture-app/` to `./` (relative path)
+**Goal: make scripture audio sound like a real voice.**
 
-### New File
-- `server.js` — simple local HTTP dev server for testing (network-first cache behavior locally)
+### The reframe that drives the plan
 
-### Changes in Detail
+Scripture is a **fixed, finite corpus**. Acts 10 in KJV never changes. Synthesizing it live on the phone on every play — which is what the app does today — is wasted work that also guarantees the phone's mechanical voice. Every serious app in this space **pre-renders audio once and serves files**.
 
-**app.js:**
-- Added state: `bookChapterCounts` Map, `pendingChapterCountLoads` Set, `expandedBookId`
-- `getBookChapterCount(book)` — new function to fetch max chapter for a translation on demand
-- `openBookSheet()` — preserves `expandedBookId` when opening (for UX continuity)
-- Translation picker now clears chapter count cache when switched (ensures fresh count per translation)
-- `renderBookList()` — refactored to build expandable book items with inline chapter grid
+This also means: static GitHub Pages hosting **cannot hold an API key**. Any cloud TTS needs a proxy — `server.js` or a Supabase Edge Function.
 
-**style.css:**
-- New `.book-item-wrap`, `.book-item-caret`, `.book-chapter-grid`, `.book-chapter-btn`, `.book-chapter-loading` components
-- Chapter buttons are circular, shadow-based, with active state highlighting
-- Dark theme variants for all new components
-- Book items now flex (label + caret) with space-between layout
+### Options evaluated
 
-**manifest.json:**
-- Changed `start_url` and `scope` to relative paths (`./`) instead of GitHub Pages project path (`/Scripture-app/`)
-- Allows app to work from any root domain (local dev, other hosting, etc.)
+| Option | Sound | Cost | Blocker |
+|---|---|---|---|
+| Web Speech (current) | Mechanical | Free | — it's the problem |
+| Kokoro (current) | Decent | Free | Never worked on device |
+| Enhanced system voices | OK | Free | User must install in OS settings |
+| Pre-rendered OpenAI TTS → Supabase Storage | Very good | ~tens of $ for full KJV | Needs key + proxy |
+| Pre-rendered ElevenLabs | Best synthetic | ~10–20× OpenAI | Needs key + proxy |
+| **Human narration (FCBH / Bible Brain)** | **Real human** | **Free** | **Needs free API key** |
 
-**server.js:**
-- Minimal HTTP server for local testing
-- Serves static files with `Cache-Control: no-store` (no caching) — good for dev
-- Supports any relative URL path structure (will not work if app is deployed under a subpath again without reverting manifest)
+_Cost figures are from June 2026 research and are unverified as of this update — confirm current rates before committing to a budget._
 
-### Rationale
-- **Book expansion:** improved mobile UX — users can now see chapter counts inline before selecting a book, avoiding mid-flow lookups
-- **Local server:** enables testing network-first service worker behavior and cache-busting without needing GitHub Pages or full build
-- **Manifest change:** makes the app more portable and supports multiple deployment targets
+### Current direction: human narration via Bible Brain (FCBH)
 
-### Cache-Busting Status ✓
-All three cache-busting anchors have been incremented together (required by user memory):
-- `index.html` style.css query string: v94 → v96
-- `index.html` app.js query string: v85 → v88
-- `sw.js` CACHE name: v93 → v95
+The user chose **real human narration** over synthesis.
 
-**Important:** These changes are **not yet committed or pushed**. User tests on phone, so the app needs to be deployed (pushed to GitHub main) and cache cleared on mobile before testing new behavior.
+**Verified 2026-07-31 via web research:**
+- Bible Brain (FCBH's API, powers bible.is) is the Digital Bible Platform v4 — REST, JSON, free for non-commercial use, requires a developer key.
+- It has **Audio Timings endpoints** returning the start time of each verse.
+- Coverage was **231 bibleIds** as of their last published count — not universal, per-version.
 
----
+**NOT yet verified:** whether **KJV specifically** has audio *with* verse timings. The docs do not publish the list; it requires an authenticated query.
 
-## Current Search State
+**Why timings matter:** the player's per-verse features (verse repeat, repeat delay, prev/next, now-playing highlight) all assume verse-level addressing. A plain chapter MP3 is one blob and would break them. Verse timings preserve the whole existing feature set.
 
-The original mobile semantic-search bug is no longer the best description of the system.
+### Immediate next steps
 
-What is now true:
+1. **User:** request a free key at https://4.dbt.io/api_key/request — arrives by email.
+2. **Assistant:** query the API to confirm KJV has audio + verse timings.
+3. If yes → implement `FCBHProvider` against the existing seam:
+   - `getVoices()` → available audio filesets (dramatized / non-dramatized)
+   - `speakChunk()` → seek into the chapter audio at the verse's start time, play until the next verse's start
+   - `prefetch()` → already supported by `VoiceEngine` (`voice.js:745-748`), use it
+4. If KJV lacks timings → fall back to pre-rendered OpenAI TTS, **one file per verse** (simpler than chapter files + timestamps, and maps directly onto the existing queue).
 
-1. The app sends the query embedding as a pgvector literal string before calling Supabase RPC.
-2. `verse_embeddings` is now translation-aware.
-3. Live Supabase has both `kjv` and `bsb` embedding sets populated (`31,102` rows each).
-4. The semantic RPC now ranks across available translation embeddings, then returns the verse text in the currently selected translation.
-5. The final client-side merge/rank logic was adjusted so a genuinely strong semantic match can outrank shallow literal keyword overlap.
-
-Verified example:
-
-- Query: `Saul threw a spear at Jonathan`
-- Expected verse: `1 Samuel 20:33`
-- Raw semantic RPC now returns `1 Samuel 20:33` as result #1 for `target_translation='kjv'`
-- Full local reproduction of the app ranking path also returns `1 Samuel 20:33` as result #1 after commit `2726213`
-
-If the phone still shows older ordering, the most likely cause is stale client cache rather than stale database logic.
+### Decisions already made
+- Do not keep debugging Kokoro.
+- Do not put any API key in client code.
+- Prefer pre-rendered/cached audio over live synthesis.
+- Lazy generation (render a chapter on first open, cache forever) over rendering all 31,102 verses upfront.
 
 ---
 
-## Changes Made (since last handoff)
+## Deploy Checklist (CRITICAL — 4 anchors, all together)
 
-### Verse selection styling overhaul
-- Replaced the old `border-radius: 4px` + `margin-top: -7px` overlap approach that caused a visible horizontal stripe between adjacent selected verses.
-- `.verse-row.selected` now has `border-radius: 0` and a solid (non-alpha) background so the 6px row-overlap zone doesn't double-tint.
-- Only `.selected-start` rounds top corners and `.selected-end` rounds bottom corners — the selection renders as one continuous block.
-- Added a continuous `inset 2px 0 0` left accent bar across the whole selection.
-- Light theme: `#fdeced` (selected), `#fce6e9` (action-active). Dark theme: `#2b191e` (selected), `#361c22` (action-active).
+Current values in the working tree:
 
-### Semantic Bible search (major feature)
-- `migration-add-verse-embeddings.sql` now defines translation-aware embeddings and a semantic RPC that ranks across available translation embeddings, then returns the active translation text.
-- New file `migration-translation-aware-embeddings.sql` — upgrade migration for existing Supabase projects that already had the old KJV-only embedding table.
-- `embed-verses.js` now supports `TRANSLATION=<slug>` and resumable smaller upload batches via `BATCH_UPLOAD=<n>`.
-- KJV embeddings are already in live Supabase.
-- BSB embeddings were generated and uploaded to live Supabase during this session (`31,102` rows).
-- `package.json` — added `@xenova/transformers: ^2.17.2` dependency.
-- `app.js` `doSearch()` still embeds queries locally in the browser, but now sends the query vector as a pgvector literal string to the RPC.
-- Results are still returned in the active translation, but the semantic rank can now be helped by other embedded translations such as BSB.
-- `mergeAndRankSearchResults()` now includes phrase-aware boosts and a semantic-confidence boost so strong semantic hits are not buried by shallow keyword overlap.
+| Anchor | Location | Current |
+|---|---|---|
+| `style.css?v=N` | `index.html:16` | **104** |
+| `app.js?v=M` | `index.html:262` | **96** ⚠️ needs 97 |
+| `voice.js?v=P` | `app.js:2` (import specifier) | **10** |
+| `CACHE = 'scripture-vK'` | `sw.js:1` | **106** |
 
-### Cache / deployment notes
-- Always bump `index.html` `style.css?v=N` and `app.js?v=N` query strings AND `sw.js` `CACHE` name together whenever CSS or JS changes. Forgetting either means the phone serves stale files.
-- GitHub Pages serves `index.html` with `Cache-Control: max-age=600` (10 min). If a change isn't showing on phone, the browser HTTP cache still has the old HTML. Wait 10 min or hard-refresh.
+**Why:** GitHub Pages serves assets with caching headers. Only a changed URL forces a refetch. The SW is network-first so the SW cache isn't the issue — the browser HTTP cache is.
 
----
+**`voice.js` is an ES module imported by `app.js`** — its version lives in the import specifier, NOT `index.html`. Bumping `app.js?v=` does NOT refresh `voice.js`. A `voice.js` edit needs **both** `P` (the import) and `M` (app.js, whose text changed) bumped.
 
-## Changes Made (pre-Claude, from original Codex handoff)
+GitHub Pages serves `index.html` with `max-age=600`. If a change isn't showing, wait 10 min or hard-refresh.
 
-- Added a hard-press/long-press verse action mode in the Bible reader.
-- Disabled native iOS text selection/callout on verse rows and compare sheet rows.
-- Added compare support for multiple selected verses, grouped by translation.
-- Added stack compare mode on cards via a dedicated Compare button.
-- Converted the Bible reader to one grouped `.scripture-card` per chapter, with individual `.verse-row` elements inside it. Do not reintroduce per-verse cards unless explicitly requested.
-- Tightened grouped verse spacing by reducing row padding and using slight negative row margins.
-- Added selection grouping classes (`selected-start`, `selected-middle`, `selected-end`) so adjacent selected verses render as one continuous highlight.
-- Fixed dark-mode contrast for the grouped reader card.
-- Tightened stacked verse row spacing.
-- Fixed the stack compare bar dismiss/clear behavior.
-- Preserved stack and Bible scroll positions across phone sleep/app resume.
-- Fixed the red verse highlight appearing on tap during scroll.
-- Reworked the books sheet drag snap interaction (midpoint-based, not velocity).
-- Fixed the reader settings panel becoming untappable on mobile.
-- Added scroll-direction-based chrome hiding for both Bible and Stacks.
-- Fixed chrome hide/show scroll jumps with overlay chrome and stable scroll padding.
-- Added Supabase-backed stack sync via `user_stack_state` table.
-- Added account sign-in/sign-up/sign-out UI.
-- Added stack import/export controls.
-- Added a stack switcher (vertical popup list).
-- Added `San Francisco` as a selectable reader font.
-- Reworked reader settings into a richer mobile sheet.
-- Created this handoff document.
+**The user tests on their phone — always commit and push after changes.**
 
 ---
 
 ## What This App Is
 
-A **Bible study PWA** (Progressive Web App) installable on iPhone/Android. Features:
-- Multi-translation Bible reader (18 translations: KJV, BSB, WEB, AKJV, UKJV, MKJV, LITV, CPDV, Darby, Webster, DRA, YLT, ASV, BBE, NHEB, Jubilee, LEB, Rotherham)
-- **Semantic search** — meaning-based, typo-tolerant, powered by in-browser Transformers.js + Supabase pgvector
-- "Stacks" — user-created collections of saved verses (cached in localStorage, synced to Supabase when signed in)
+A **Bible study PWA** installable on iPhone/Android.
+
+- Multi-translation reader (18 translations)
+- **Semantic search** — meaning-based, typo-tolerant (Transformers.js + Supabase pgvector)
+- **Stacks** — user-created verse collections, localStorage + Supabase sync
+- **Voice Mode** — TTS playback of verses/chapters/stacks
 - Greek word analysis for NT verses
 - Compare translations side-by-side
-- Reader settings: font, size, spacing, light/dark theme
-- Account-based stack sync with Supabase Auth
-- JSON import/export for stacks
-
----
-
-## Credentials & Keys
-
-> ⚠️ **The service key below has been committed to git history and should be rotated immediately at supabase.com → Project Settings → API.**
-
-| Key | Value | Used In |
-|-----|-------|---------|
-| Supabase Project URL | Check `config.js` | `config.js`, all import scripts |
-| Supabase Anon Key (public) | Check `config.js` | `config.js` — loaded by browser, safe to be public |
-| Supabase Service Role Key (secret) | Check `import.js` | Hardcoded in old scripts — **ROTATE immediately** |
+- Reader settings: font, size, spacing, light/dark
+- Account sync via Supabase Auth; JSON import/export
 
 ---
 
 ## Hosting
 
-- Git remote: `https://github.com/nwabuokumich-debug/Scripture-app.git`, branch `main`
-- Live URL: `https://nwabuokumich-debug.github.io/Scripture-app/`
-- Deploy: push to `main` → GitHub Pages auto-deploys (usually 30–60s)
-- `manifest.json` has `start_url` and `scope` set to `/Scripture-app/`
+- Remote: `https://github.com/nwabuokumich-debug/Scripture-app.git`, branch `main`
+- Live: `https://nwabuokumich-debug.github.io/Scripture-app/`
+- Deploy: push to `main` → GitHub Pages auto-deploys (30–60s)
+- `manifest.json` `start_url`/`scope` are relative (`./`) — if redeploying under the `/Scripture-app/` subpath, revert these
 
 ---
 
 ## Database (Supabase)
 
+Project: `klrvxlltgeibglszsezq.supabase.co`
+
 ### Tables
 
-**`books`** — `id` INTEGER PK (1–66), `name` TEXT, `testament` TEXT (`'old'`/`'new'`)
+**`books`** — `id` INTEGER PK (1–66), `name`, `testament` (`'old'`/`'new'`)
 
 **`verses`** — `id` SERIAL PK, `book_id` → books, `chapter`, `verse`, `text`, `translation` (default `'kjv'`)
 
-**`verse_embeddings`** *(new — already created and populated)*
-- `translation`, `book_id`, `chapter`, `verse` — composite PK
-- `embedding vector(384)` — all-MiniLM-L6-v2 embedding of verse text for that translation
-- HNSW cosine index for fast similarity search
-- RLS: public read enabled
-- Live DB currently has:
-  - `31,102` KJV embedding rows
-  - `31,102` BSB embedding rows
+**`verse_embeddings`** — composite PK (`translation`, `book_id`, `chapter`, `verse`), `embedding vector(384)` (all-MiniLM-L6-v2), HNSW cosine index, public read RLS.
+Live: **31,102 KJV rows + 31,102 BSB rows**
 
-**`nt_word_tags`** + **`strongs_lexicon`** — Greek data, may or may not exist
+**`user_stack_state`** — `user_id` UUID PK, `stacks` JSONB, `updated_at`; RLS per-user
 
-**`user_stack_state`** — `user_id` UUID PK, `stacks` JSONB, `updated_at` TIMESTAMPTZ; RLS per-user
+**`nt_word_tags`** + **`strongs_lexicon`** — Greek data; not in `schema.sql`, may not exist
 
-### RPC functions
-- `search_verses_semantic(query_embedding vector(384), match_count int, target_translation text)` — compares the query against available translation embeddings, groups by verse reference, keeps the best semantic distance per verse, and returns the verse text in `target_translation`. Grant to anon + authenticated.
+### RPC
+`search_verses_semantic(query_embedding vector(384), match_count int, target_translation text)` — ranks across available translation embeddings, groups by verse reference, keeps best distance per verse, returns text in `target_translation`. Granted to anon + authenticated.
 
 ### Indexes
 ```sql
-idx_verses_location ON verses(book_id, chapter, verse, translation)
-idx_verses_fts ON verses USING gin(to_tsvector('english', text))
-idx_verses_translation ON verses(translation)
-idx_verse_embeddings_hnsw ON verse_embeddings USING hnsw (embedding vector_cosine_ops)
+idx_verses_location        ON verses(book_id, chapter, verse, translation)
+idx_verses_fts             ON verses USING gin(to_tsvector('english', text))
+idx_verses_translation     ON verses(translation)
+idx_verse_embeddings_hnsw  ON verse_embeddings USING hnsw (embedding vector_cosine_ops)
 ```
 
----
-
-## Import Scripts
-
-All require `npm install` first. Run from repo root.
-
-| Script | What It Imports | How to Run |
-|--------|----------------|------------|
-| `embed-verses.js` | Embeddings for one translation into `verse_embeddings` | `SUPABASE_SERVICE_KEY=xxx TRANSLATION=bsb node embed-verses.js` |
-| `import-bsb.js` | BSB | `SUPABASE_SERVICE_KEY=xxx node import-bsb.js` |
-| `import-modern.js` | AKJV, UKJV, LITV, MKJV, CPDV | `SUPABASE_SERVICE_KEY=xxx node import-modern.js` |
-| `import-translations.js` | WEB, Darby, Webster, DRA, etc. | `SUPABASE_SERVICE_KEY=xxx node import-translations.js` |
-| `stack-admin.js` | Admin CLI for user stacks | `SUPABASE_SERVICE_KEY=xxx node stack-admin.js check --email x` |
-
-Scripts gitignored (contain hardcoded secrets): `import.js`, `import-greek.js`, `clear.js`, `clear-greek.js`
+### If adding audio storage
+A Supabase Storage bucket for rendered audio is the planned home for pre-rendered files. Not yet created.
 
 ---
 
@@ -297,88 +245,91 @@ Scripts gitignored (contain hardcoded secrets): `import.js`, `import-greek.js`, 
 ```
 /
 ├── index.html              # App shell, all UI markup
-├── app.js                  # All frontend logic (imports voice.js)
-├── voice.js                # Scripture Voice Mode subsystem (Web Speech default + experimental Kokoro)
-├── kokoro-worker.js        # Experimental Kokoro worker; user has not heard successful output
-├── style.css               # All styles
+├── app.js                  # All frontend logic (137KB) — imports voice.js
+├── voice.js                # Voice Mode subsystem (1109 lines)
+├── kokoro-worker.js        # Kokoro worker — never produced audible output
+├── style.css               # All styles (78KB)
 ├── config.js               # Supabase URL + anon key
-├── sw.js                   # Service worker (network-first caching)
-├── manifest.json           # PWA manifest
-├── icon.svg                # App icon
-├── schema.sql              # Initial DB setup
+├── sw.js                   # Service worker (network-first)
+├── server.js               # Local dev server, port 4173 (npm run start|dev)
+├── manifest.json           # PWA manifest (relative start_url/scope)
+├── icon.svg
+├── schema.sql
 ├── migration-add-translation.sql
 ├── migration-add-user-stack-state.sql
-├── migration-add-verse-embeddings.sql  # translation-aware pgvector + HNSW + RPC
-├── migration-translation-aware-embeddings.sql  # upgrade migration for old DBs
-├── embed-verses.js         # Per-translation embedding job (KJV + BSB already run live)
+├── migration-add-verse-embeddings.sql
+├── migration-translation-aware-embeddings.sql
+├── embed-verses.js         # Per-translation embedding job
 ├── stack-admin.js          # Service-role stack admin CLI
 ├── import*.js              # Data import scripts
-└── package.json            # Node deps (includes @xenova/transformers)
+└── package.json            # includes @xenova/transformers
 ```
+
+---
+
+## Import Scripts
+
+Require `npm install`. Run from repo root.
+
+| Script | Imports | How |
+|---|---|---|
+| `embed-verses.js` | Embeddings for one translation | `SUPABASE_SERVICE_KEY=xxx TRANSLATION=bsb node embed-verses.js` |
+| `import-bsb.js` | BSB | `SUPABASE_SERVICE_KEY=xxx node import-bsb.js` |
+| `import-modern.js` | AKJV, UKJV, LITV, MKJV, CPDV | `SUPABASE_SERVICE_KEY=xxx node import-modern.js` |
+| `import-translations.js` | WEB, Darby, Webster, DRA | `SUPABASE_SERVICE_KEY=xxx node import-translations.js` |
+| `stack-admin.js` | Admin CLI | `SUPABASE_SERVICE_KEY=xxx node stack-admin.js check --email x` |
+
+Gitignored (hardcoded secrets): `import.js`, `import-greek.js`, `clear.js`, `clear-greek.js`
 
 ---
 
 ## Key Patterns in app.js
 
-### Search (semantic)
-- `preloadEmbedder()` — lazy-loads `Xenova/all-MiniLM-L6-v2` from jsDelivr CDN (~25MB, cached after first load). Called automatically when search sheet opens to warm the model in the background.
-- `embedQueryVector(text)` — awaits the embedder and returns a 384-element float array.
-- `doSearch()` — reference parser first (direct verse jump), then semantic: embed query → stringify as pgvector literal → call `search_verses_semantic` RPC → merge with keyword candidates → rerank → render results in active translation.
-- `fetchKeywordCandidates()` — now also searches 3-word and 4-word phrase fragments so remembered Bible wording can get the right verse into the candidate pool before final ranking.
-- `mergeAndRankSearchResults()` — now combines keyword score, semantic score, phrase score, hybrid bonus, and semantic-confidence boost.
+### Search
+- `preloadEmbedder()` — lazy-loads `Xenova/all-MiniLM-L6-v2` from jsDelivr (~25MB, cached). Warmed when the search sheet opens.
+- `embedQueryVector(text)` — returns a 384-element float array.
+- `doSearch()` — reference parser first (direct jump), then semantic: embed → pgvector literal string → `search_verses_semantic` RPC → merge with keyword candidates → rerank → render.
+- `fetchKeywordCandidates()` — also searches 3- and 4-word phrase fragments.
+- `mergeAndRankSearchResults()` — keyword + semantic + phrase + hybrid bonus + semantic-confidence boost.
 
-### State variables (top of file)
-- `activeTranslation` — current translation slug, persisted in `localStorage`
-- `TRANSLATIONS` — map of slug → display name for all 18 translations
-- `selectedVerses` — array of selected verse objects for stacks/compare
-- `appMode` — `'bible'` or `'stacks'`
-- `activeStackId` — which stack is open
-- `greekByVerse` — cached Greek word data for current chapter
+### Voice integration (app.js holds no voice logic)
+Imports `Voice`/`initVoice`. All Play UI feature-gated on `Voice.isSupported`. Play affordances in 4 places: `updateSelectionBar` (verse-action bar), `doSearch` (results), `renderStackView` (cards), `renderVerses` (chapter "Listen" pill). `Voice.stopScripture()` on navigation: `selectChapter`, `openBibleLocation`, `setMode`, `openStack`. Translation change funnels through `selectChapter`.
+
+### State variables
+`activeTranslation` · `TRANSLATIONS` (18 slugs) · `selectedVerses` · `appMode` (`'bible'`/`'stacks'`) · `activeStackId` · `greekByVerse` · `bookChapterCounts` · `expandedBookId`
 
 ### Stacks
-- Local cache key: `study_stacks`
-- Cloud table: `user_stack_state`
-- Structure: `[{ id, title, verses: [{ passages: [{ ref, text }], note, addedAt }], createdAt, updatedAt }]`
-- When signed in, remote stacks merged with local by `id`, newer `updatedAt` wins
+- localStorage key `study_stacks`; cloud table `user_stack_state`
+- `[{ id, title, verses: [{ passages: [{ ref, text }], note, addedAt }], createdAt, updatedAt }]`
+- Signed in → merged by `id`, newer `updatedAt` wins
 
-### Verse selection classes (JS adds these)
-- `selected` — base tinted background + left accent bar
-- `selected-start` — top corners rounded (14px), extra top padding
-- `selected-middle` — no rounding (between two consecutive selected verses)
-- `selected-end` — bottom corners rounded (14px), extra bottom padding
-- `action-active` — slightly stronger tint + stronger left bar (the verse long-pressed)
+### Verse selection classes
+`selected` · `selected-start` (top corners 14px) · `selected-middle` (no rounding) · `selected-end` (bottom corners) · `action-active` (long-pressed verse)
 
-### Service Worker
-- Network-first: always fetches fresh, falls back to cache only on network failure
-- Cache name must be bumped in `sw.js` on every deploy
-- Browser HTTP cache (max-age=600 from GH Pages) is the real cache to bust — change query strings in `index.html`
+### localStorage keys
+`study_stacks` · `active_translation` · `reader_settings` · `scripture_scroll_state` · `voice_settings`
 
 ---
 
 ## Known Issues
 
-1. **Client cache can mask fixes** — if phone results do not match verified local/Supabase behavior, stale `index.html` or service-worker cache is the first suspect.
-2. **Service key committed to git** — rotate at Supabase dashboard.
-3. **Greek tables may not exist** — `nt_word_tags` and `strongs_lexicon` not in `schema.sql`.
-4. **Cache busting is manual** — must bump `sw.js` CACHE + `index.html` query strings on every deploy.
+1. **Client cache masks fixes** — if the phone disagrees with verified local behavior, stale `index.html` / SW cache is the first suspect.
+2. **⚠️ Supabase service key was committed to git history** — rotate at Supabase → Project Settings → API. Still outstanding.
+3. **Greek tables may not exist** — `nt_word_tags`, `strongs_lexicon` not in `schema.sql`.
+4. **Cache busting is manual** — 4 anchors, easy to miss one (currently `app.js?v=` is out of sync).
+5. **Kokoro is dead weight** — 14 voices in the picker that silently fall back to Web Speech. Consider hiding them; they make the user think they're hearing Kokoro when they aren't.
+6. **6 weeks of unpushed work** — the player redesign has never been device-tested.
 
 ---
 
-## Tips for Codex
+## Tips
 
-1. **Read app.js top-to-bottom once** — all logic is in one file. No framework.
-2. **Translation picker** — slide-up sheet triggered by clicking translation label. Same trigger closes it.
-3. **Books sheet** — dismisses via Cancel, backdrop tap, or drag-down (midpoint snap). Now expandable per-book chapter grid.
-4. **Chrome hiding** — scroll-direction based for both Bible and Stacks.
-5. **Greek analysis** — full-screen overlay `#greek-page`, NT only.
-6. **Compare** — bottom sheet `#compare-backdrop`, groups verses by translation.
-7. **Stack compare mode** — one card at a time, uses whole block unless specific passages selected.
-8. **To add a new translation** — add slug/name to `TRANSLATIONS` in `app.js`, create import script, run it.
-9. **To deploy** — push to `main`. Bump cache versions first (see Cache section). **NOTE:** Uncommitted changes are ready; confirm with user before committing.
-10. **Auth for stacks** — Bible/Greek reads are public Supabase queries; stack sync needs Supabase Auth + `user_stack_state` table + RLS.
-11. **localStorage keys** — `study_stacks`, `active_translation`, `reader_settings`, `scripture_scroll_state`.
-12. **Bible reader layout** — one `.scripture-card` per chapter, `.verse-row` children. Do NOT reintroduce per-verse cards.
-13. **Scroll resume** — preserves `bibleContent.scrollTop` and `stacksContent.scrollTop` on app resume. Don't call `renderStackView(..., { resetScroll: true })` on resume.
-14. **Semantic search embeddings** — no longer KJV-only. The live DB now has both KJV and BSB embeddings. The RPC ranks across available translation embeddings and then joins to whichever translation the user has active.
-15. **Local dev server** — `npm run start` or `npm run dev` launches HTTP server on port 4173 (customizable via `PORT` env var). Good for testing cache behavior without GitHub Pages.
-16. **Manifest deployment warning** — if app needs to be served under `/Scripture-app/` subpath again, revert `start_url` and `scope` in manifest.json and update any routing logic accordingly.
+1. **Read `app.js` top-to-bottom once** — all logic in one file, no framework.
+2. **Voice work goes in `voice.js`** — respect the provider seam; don't put provider logic in `VoiceEngine` or `VoicePlayer`.
+3. **Books sheet** — expandable per-book chapter grid; dismisses via Cancel, backdrop, or drag-down (midpoint snap).
+4. **Bible reader layout** — one `.scripture-card` per chapter. Do NOT reintroduce per-verse cards.
+5. **Scroll resume** — don't call `renderStackView(..., { resetScroll: true })` on resume.
+6. **Adding a translation** — add slug/name to `TRANSLATIONS` in `app.js`, write an import script, run it.
+7. **Local dev** — `npm run start` (port 4173, `PORT` env to change). Serves `Cache-Control: no-store`.
+8. **Semantic search is translation-aware** — RPC ranks across all embedded translations, joins to the active one.
+9. **Confirm before pushing** when a commit bundles unrelated features.
