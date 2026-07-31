@@ -878,10 +878,43 @@ class VoiceEngine {
 }
 
 // ── Floating player UI (owns only #voice-bar) ────────────────────────────
+// Sleep-timer options, in minutes. 0 = off; tapping cycles through.
+const TIMER_STEPS = [0, 5, 10, 15, 30, 60];
+
+const ICON = {
+  play:  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.6c0-.9 1-1.5 1.8-1l9 6.4c.7.5.7 1.5 0 2l-9 6.4c-.8.5-1.8 0-1.8-1V5.6Z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6.5" y="5" width="4" height="14" rx="1.6"/><rect x="13.5" y="5" width="4" height="14" rx="1.6"/></svg>',
+  prev:  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5.5" width="2.6" height="13" rx="1.3"/><path d="M19 7.1v9.8c0 .9-1 1.4-1.7.9l-7-4.9a1.1 1.1 0 0 1 0-1.8l7-4.9c.7-.5 1.7 0 1.7.9Z"/></svg>',
+  next:  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="16.4" y="5.5" width="2.6" height="13" rx="1.3"/><path d="M5 7.1v9.8c0 .9 1 1.4 1.7.9l7-4.9a1.1 1.1 0 0 0 0-1.8l-7-4.9C6 6.2 5 6.7 5 7.1Z"/></svg>',
+  back10:'<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 6.5a7 7 0 1 1-6.6 4.7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M12 3.2 8.6 6.5 12 9.8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="16.6" text-anchor="middle" font-size="7.2" font-weight="700" fill="currentColor" font-family="Inter, sans-serif">10</text></svg>',
+  fwd10: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 6.5a7 7 0 1 0 6.6 4.7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="m12 3.2 3.4 3.3L12 9.8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="16.6" text-anchor="middle" font-size="7.2" font-weight="700" fill="currentColor" font-family="Inter, sans-serif">10</text></svg>',
+  close: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>',
+  chevronUp: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 14 5-5 5 5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  speed: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4.6 17a8 8 0 1 1 14.8 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m12 12.8 3.6-3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="13.2" r="1.5" fill="currentColor"/></svg>',
+  wave:  '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 10.5v3M8 7.5v9M12 5v14M16 8.5v7M20 10.5v3"/></g></svg>',
+  loop:  '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9.5h9.5A3.5 3.5 0 0 1 19 13v.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m8.4 7.1-2.4 2.4 2.4 2.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 15.5H8.5A3.5 3.5 0 0 1 5 12v-.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15.6 17.9 2.4-2.4-2.4-2.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12.5" r="7.5" stroke="currentColor" stroke-width="1.8"/><path d="M12 8.6v4.2l2.6 1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  timer: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="13.2" r="7.2" stroke="currentColor" stroke-width="1.8"/><path d="M12 9.6v3.6l2.4 1.5M9.6 3.4h4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  stop:  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2.4"/></svg>',
+  minimize: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 10 5 5 5-5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+function fmtTime(seconds) {
+  if (!isFinite(seconds) || seconds < 0) seconds = 0;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 class VoicePlayer {
   constructor(engine) {
     this.engine = engine;
     this.el = null;
+    this._timerMinutes = 0;
+    this._timerEndsAt = 0;
+    this._timerHandle = null;
+    this._tick = null;
+    this._scrubbing = false;
     this._build();
     this._populateVoices();
     this.update();
@@ -896,49 +929,67 @@ class VoicePlayer {
     el.setAttribute('aria-hidden', 'true');
     el.innerHTML = `
       <div class="voice-compact">
-        <button class="voice-btn voice-compact-toggle" type="button" aria-label="Pause" aria-pressed="true">⏸</button>
-        <div class="voice-compact-label" aria-live="polite">
+        <button class="voice-cbtn voice-compact-toggle" type="button" aria-label="Pause">${ICON.pause}</button>
+        <button class="voice-compact-label" type="button" aria-label="Open player">
           <span class="voice-compact-ref"></span>
           <span class="voice-compact-sub"></span>
-        </div>
-        <button class="voice-btn voice-expand-toggle" type="button" aria-label="Expand player" aria-expanded="false">▲</button>
+        </button>
+        <button class="voice-cbtn voice-ghost voice-expand-toggle" type="button" aria-label="Open player" aria-expanded="false">${ICON.chevronUp}</button>
+        <button class="voice-cbtn voice-ghost voice-compact-close" type="button" aria-label="Stop and close">${ICON.close}</button>
       </div>
-      <div class="voice-expanded" hidden>
-        <div class="voice-header">
-          <div class="voice-label" aria-live="polite">
+
+      <div class="voice-sheet" hidden>
+        <div class="voice-grabber" role="button" tabindex="0" aria-label="Minimize player"><span></span></div>
+
+        <div class="voice-head">
+          <div class="voice-title" aria-live="polite">
             <span class="voice-ref"></span>
             <span class="voice-sub"></span>
           </div>
-          <button class="voice-btn voice-collapse" type="button" aria-label="Minimize player">▼</button>
+          <button class="voice-cbtn voice-ghost voice-collapse" type="button" aria-label="Minimize player">${ICON.close}</button>
         </div>
+
+        <div class="voice-scrub" hidden>
+          <span class="voice-time voice-time-cur">0:00</span>
+          <input class="voice-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek within verse">
+          <span class="voice-time voice-time-dur">0:00</span>
+        </div>
+
         <div class="voice-transport">
-          <button class="voice-btn voice-prev" type="button" aria-label="Previous verse">⏮</button>
-          <button class="voice-btn voice-toggle" type="button" aria-label="Pause" aria-pressed="true">⏸</button>
-          <button class="voice-btn voice-next" type="button" aria-label="Next verse">⏭</button>
+          <button class="voice-cbtn voice-ghost voice-back10" type="button" aria-label="Back 10 seconds">${ICON.back10}</button>
+          <button class="voice-cbtn voice-ghost voice-prev" type="button" aria-label="Previous verse">${ICON.prev}</button>
+          <button class="voice-toggle" type="button" aria-label="Pause">${ICON.pause}</button>
+          <button class="voice-cbtn voice-ghost voice-next" type="button" aria-label="Next verse">${ICON.next}</button>
+          <button class="voice-cbtn voice-ghost voice-fwd10" type="button" aria-label="Forward 10 seconds">${ICON.fwd10}</button>
         </div>
-        <div class="voice-tray">
-          <div class="voice-tray-row">
-            <span class="voice-tray-label">Speed</span>
+
+        <div class="voice-card">
+          <div class="voice-row">
+            <span class="voice-row-ico">${ICON.speed}</span>
+            <span class="voice-row-label">Speed</span>
             <div class="voice-stepper">
               <button class="voice-step voice-rate-down" type="button" aria-label="Slower">−</button>
               <span class="voice-rate-val">1.0×</span>
               <button class="voice-step voice-rate-up" type="button" aria-label="Faster">+</button>
             </div>
           </div>
-          <div class="voice-tray-row">
-            <span class="voice-tray-label">Voice</span>
+          <div class="voice-row">
+            <span class="voice-row-ico">${ICON.wave}</span>
+            <span class="voice-row-label">Voice</span>
             <select class="voice-select" aria-label="Reading voice"></select>
           </div>
-          <div class="voice-tray-row">
-            <span class="voice-tray-label">Repeat</span>
-            <div class="voice-repeat-group" role="group" aria-label="Repeat mode">
+          <div class="voice-row">
+            <span class="voice-row-ico">${ICON.loop}</span>
+            <span class="voice-row-label">Repeat</span>
+            <div class="voice-seg" role="group" aria-label="Repeat mode">
               <button class="voice-repeat-btn" data-mode="none" type="button" aria-pressed="true">Off</button>
               <button class="voice-repeat-btn" data-mode="verse" type="button" aria-pressed="false">Verse</button>
               <button class="voice-repeat-btn" data-mode="passage" type="button" aria-pressed="false">Passage</button>
             </div>
           </div>
-          <div class="voice-tray-row">
-            <span class="voice-tray-label">Repeat delay</span>
+          <div class="voice-row">
+            <span class="voice-row-ico">${ICON.clock}</span>
+            <span class="voice-row-label">Repeat delay</span>
             <div class="voice-stepper">
               <button class="voice-step voice-delay-down" type="button" aria-label="Less delay">−</button>
               <span class="voice-delay-val">0.0s</span>
@@ -946,13 +997,23 @@ class VoicePlayer {
             </div>
           </div>
         </div>
-        <button class="voice-stop" type="button">Stop reading</button>
+
+        <div class="voice-actions">
+          <button class="voice-pill voice-timer" type="button" aria-label="Sleep timer">
+            <span class="voice-pill-ico">${ICON.timer}</span><span class="voice-timer-label">Timer</span>
+          </button>
+          <button class="voice-pill voice-pill-primary voice-stop" type="button">
+            <span class="voice-pill-ico">${ICON.stop}</span><span>Stop reading</span>
+          </button>
+          <button class="voice-pill voice-minimize" type="button" aria-label="Minimize player">
+            <span class="voice-pill-ico">${ICON.minimize}</span><span>Hide</span>
+          </button>
+        </div>
       </div>
     `;
     document.body.appendChild(el);
     this.el = el;
     this._bind();
-    // Voice list is often empty on first load and arrives asynchronously.
     try { window.speechSynthesis?.addEventListener('voiceschanged', () => this._populateVoices()); } catch {}
   }
 
@@ -968,12 +1029,28 @@ class VoicePlayer {
     this._$('.voice-compact-toggle').addEventListener('click', togglePlay);
     this._$('.voice-toggle').addEventListener('click', togglePlay);
 
-    this._$('.voice-stop').addEventListener('click', () => eng.stopScripture());
     this._$('.voice-prev').addEventListener('click', () => eng.prev());
     this._$('.voice-next').addEventListener('click', () => eng.next());
+    this._$('.voice-back10').addEventListener('click', () => this._seekBy(-10));
+    this._$('.voice-fwd10').addEventListener('click', () => this._seekBy(10));
 
+    // Opening and closing, from every affordance the design implies.
     this._$('.voice-expand-toggle').addEventListener('click', () => this._setExpanded(true));
+    this._$('.voice-compact-label').addEventListener('click', () => this._setExpanded(true));
     this._$('.voice-collapse').addEventListener('click', () => this._setExpanded(false));
+    this._$('.voice-minimize').addEventListener('click', () => this._setExpanded(false));
+    this._$('.voice-grabber').addEventListener('click', () => this._setExpanded(false));
+    this._$('.voice-grabber').addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._setExpanded(false); }
+    });
+
+    // Stop = end playback and dismiss entirely. Both the sheet button and the
+    // compact ✕ do it, so the player is never something you're stuck with.
+    const stopAll = () => { this._clearTimer(); eng.stopScripture(); };
+    this._$('.voice-stop').addEventListener('click', stopAll);
+    this._$('.voice-compact-close').addEventListener('click', stopAll);
+
+    this._bindDragToDismiss();
 
     this._$('.voice-rate-down').addEventListener('click', () => eng.setPlaybackRate(eng.settings.rate - RATE_STEP));
     this._$('.voice-rate-up').addEventListener('click',   () => eng.setPlaybackRate(eng.settings.rate + RATE_STEP));
@@ -985,24 +1062,146 @@ class VoicePlayer {
     });
     this._$('.voice-select').addEventListener('change', e => eng.setVoice(e.target.value));
 
-    // Collapse when tapping outside the player (but not on another control).
+    this._$('.voice-timer').addEventListener('click', () => this._cycleTimer());
+
+    const seek = this._$('.voice-seek');
+    seek.addEventListener('input', () => { this._scrubbing = true; this._paintSeekFill(); });
+    seek.addEventListener('change', () => {
+      const p = this._progress();
+      if (p) this._seekTo((Number(seek.value) / 1000) * p.duration);
+      this._scrubbing = false;
+    });
+
+    // Tapping the page collapses the sheet, but never while scrubbing.
     document.addEventListener('click', e => {
-      if (!this.el.classList.contains('expanded')) return;
+      if (!this.el.classList.contains('expanded') || this._scrubbing) return;
       if (this.el.contains(e.target)) return;
       this._setExpanded(false);
     });
   }
 
+  // Swipe the grabber (or the sheet header) downward to minimize.
+  _bindDragToDismiss() {
+    const sheet = this._$('.voice-sheet');
+    let startY = null;
+    const onDown = e => { startY = (e.touches ? e.touches[0] : e).clientY; };
+    const onMove = e => {
+      if (startY === null) return;
+      const dy = (e.touches ? e.touches[0] : e).clientY - startY;
+      if (dy > 0) sheet.style.transform = `translateY(${Math.min(dy, 140)}px)`;
+    };
+    const onUp = e => {
+      if (startY === null) return;
+      const dy = ((e.changedTouches ? e.changedTouches[0] : e).clientY) - startY;
+      sheet.style.transform = '';
+      startY = null;
+      if (dy > 60) this._setExpanded(false);
+    };
+    ['.voice-grabber', '.voice-head'].forEach(sel => {
+      const node = this._$(sel);
+      node.addEventListener('touchstart', onDown, { passive: true });
+      node.addEventListener('touchmove', onMove, { passive: true });
+      node.addEventListener('touchend', onUp);
+      node.addEventListener('mousedown', onDown);
+    });
+    window.addEventListener('mousemove', e => { if (startY !== null) onMove(e); });
+    window.addEventListener('mouseup', e => { if (startY !== null) onUp(e); });
+  }
+
+  // ── progress (only meaningful for file-backed audio) ──
+  _progress() {
+    try { return this.engine.provider.getProgress?.() || null; } catch { return null; }
+  }
+  _seekBy(delta) {
+    try { this.engine.provider.seekBy?.(delta); } catch {}
+    this._paintProgress();
+  }
+  _seekTo(seconds) {
+    try { this.engine.provider.seekTo?.(seconds); } catch {}
+    this._paintProgress();
+  }
+
+  _paintSeekFill() {
+    const seek = this._$('.voice-seek');
+    const pct = (Number(seek.value) / 1000) * 100;
+    seek.style.setProperty('--fill', `${pct}%`);
+  }
+
+  _paintProgress() {
+    const scrub = this._$('.voice-scrub');
+    const p = this._progress();
+    if (!p) { scrub.setAttribute('hidden', ''); return; }
+    scrub.removeAttribute('hidden');
+    this._$('.voice-time-cur').textContent = fmtTime(p.current);
+    this._$('.voice-time-dur').textContent = fmtTime(p.duration);
+    if (!this._scrubbing) {
+      const seek = this._$('.voice-seek');
+      seek.value = String(Math.round((p.current / p.duration) * 1000));
+      this._paintSeekFill();
+    }
+  }
+
+  _startTicking() {
+    if (this._tick) return;
+    this._tick = setInterval(() => {
+      this._paintProgress();
+      this._paintTimer();
+    }, 250);
+  }
+  _stopTicking() {
+    if (this._tick) { clearInterval(this._tick); this._tick = null; }
+  }
+
+  // ── sleep timer ──
+  _cycleTimer() {
+    const i = TIMER_STEPS.indexOf(this._timerMinutes);
+    this._timerMinutes = TIMER_STEPS[(i + 1) % TIMER_STEPS.length];
+    if (this._timerHandle) { clearTimeout(this._timerHandle); this._timerHandle = null; }
+    if (this._timerMinutes > 0) {
+      this._timerEndsAt = Date.now() + this._timerMinutes * 60000;
+      this._timerHandle = setTimeout(() => {
+        this._clearTimer();
+        this.engine.stopScripture();
+      }, this._timerMinutes * 60000);
+    } else {
+      this._timerEndsAt = 0;
+    }
+    buzz();
+    this._paintTimer();
+  }
+  _clearTimer() {
+    if (this._timerHandle) { clearTimeout(this._timerHandle); this._timerHandle = null; }
+    this._timerMinutes = 0;
+    this._timerEndsAt = 0;
+    this._paintTimer();
+  }
+  _paintTimer() {
+    const btn = this._$('.voice-timer');
+    const label = this._$('.voice-timer-label');
+    if (!btn || !label) return;
+    if (!this._timerEndsAt) {
+      btn.classList.remove('active');
+      label.textContent = 'Timer';
+      return;
+    }
+    btn.classList.add('active');
+    label.textContent = fmtTime(Math.max(0, (this._timerEndsAt - Date.now()) / 1000));
+  }
+
   _setExpanded(expanded) {
-    const expandedEl = this._$('.voice-expanded');
+    const sheet = this._$('.voice-sheet');
     if (expanded) {
-      expandedEl.removeAttribute('hidden');
+      sheet.removeAttribute('hidden');
       this.el.classList.add('expanded');
       this._$('.voice-expand-toggle').setAttribute('aria-expanded', 'true');
+      this._paintProgress();
+      this._startTicking();
     } else {
-      expandedEl.setAttribute('hidden', '');
+      sheet.setAttribute('hidden', '');
+      sheet.style.transform = '';
       this.el.classList.remove('expanded');
       this._$('.voice-expand-toggle').setAttribute('aria-expanded', 'false');
+      this._stopTicking();
     }
   }
 
@@ -1027,11 +1226,17 @@ class VoicePlayer {
     this.el.setAttribute('aria-hidden', String(!visible));
     document.body.classList.toggle('voice-active', visible);
 
+    // Stopping tears everything down — no orphaned sheet, no running timer.
+    if (!visible) {
+      this._setExpanded(false);
+      this._clearTimer();
+    }
+
     const item = eng.playlist[eng.index];
     const refText = item ? item.ref : '';
-    const subText = eng.statusLabel || (eng.playlist.length > 1 ? `${eng.index + 1} / ${eng.playlist.length}` : '');
+    const countText = eng.playlist.length > 1 ? `${eng.index + 1} of ${eng.playlist.length}` : '';
+    const subText = eng.statusLabel || countText;
 
-    // Compact + expanded labels stay in sync.
     this._$('.voice-ref').textContent = refText;
     this._$('.voice-sub').textContent = subText;
     this._$('.voice-compact-ref').textContent = refText;
@@ -1040,16 +1245,10 @@ class VoicePlayer {
     const isPaused = eng.state === 'paused';
     [this._$('.voice-toggle'), this._$('.voice-compact-toggle')].forEach(btn => {
       if (!btn) return;
-      if (isPaused) {
-        btn.textContent = '▶';
-        btn.setAttribute('aria-label', 'Resume');
-        btn.setAttribute('aria-pressed', 'false');
-      } else {
-        btn.textContent = '⏸';
-        btn.setAttribute('aria-label', 'Pause');
-        btn.setAttribute('aria-pressed', 'true');
-      }
+      btn.innerHTML = isPaused ? ICON.play : ICON.pause;
+      btn.setAttribute('aria-label', isPaused ? 'Resume' : 'Pause');
     });
+    this.el.classList.toggle('is-paused', isPaused);
 
     this._$('.voice-rate-val').textContent = `${eng.settings.rate.toFixed(1)}×`;
     this._$('.voice-delay-val').textContent = `${(eng.settings.repeatDelayMs / 1000).toFixed(1)}s`;
@@ -1062,6 +1261,8 @@ class VoicePlayer {
 
     const sel = this._$('.voice-select');
     if (sel && sel.value !== (eng.settings.voiceId || '')) sel.value = eng.settings.voiceId || '';
+
+    if (this.el.classList.contains('expanded')) this._paintProgress();
   }
 }
 
@@ -1270,6 +1471,29 @@ class AudioFileProvider {
     const ref = opts.item?.ref;
     if (!ref || this._misses.has(ref) || !this._canPlay()) return;
     this._resolve(ref).catch(() => {});
+  }
+
+  // Position within the current verse. Only file-backed playback can report
+  // this — Web Speech has no notion of elapsed time — so the player hides its
+  // scrubber whenever this returns null.
+  getProgress() {
+    const el = this._el;
+    if (!el || this._fallbackHandle) return null;
+    const duration = el.duration;
+    if (!isFinite(duration) || duration <= 0) return null;
+    return { current: Math.min(el.currentTime || 0, duration), duration };
+  }
+
+  seekTo(seconds) {
+    const p = this.getProgress();
+    if (!p) return;
+    try { this._el.currentTime = Math.max(0, Math.min(seconds, p.duration - 0.05)); } catch {}
+  }
+
+  seekBy(delta) {
+    const p = this.getProgress();
+    if (!p) return;
+    this.seekTo(p.current + delta);
   }
 
   pause() {

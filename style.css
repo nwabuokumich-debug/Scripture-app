@@ -1826,29 +1826,28 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
 
 /* ── Voice Mode player ──────────────────── */
 /* Dark in both themes, mirroring .selection-bar. */
+/* ── Voice Mode player ──────────────────────────────────────────────────
+   Two states in one fixed container: a slim pill while collapsed, a bottom
+   sheet while open. The container itself is transparent — each state paints
+   its own surface — so the two can have different radii and shadows without
+   fighting a shared background. */
 .voice-bar {
   position: fixed;
-  bottom: calc(var(--nav-h) + 10px);
   left: 50%;
-  /* Idle: slide fully below the viewport. The distance must clear the bottom
-     anchor (var(--nav-h)) AND the bar's own height (100%), or the bar parks on
-     top of the bottom nav instead of disappearing. visibility/opacity are the
-     belt-and-braces so it can never obstruct or steal taps when not in use. */
+  bottom: calc(var(--nav-h) + 8px);
+  width: min(520px, calc(100vw - 16px));
+  /* Idle: park fully below the viewport. The distance must clear the bottom
+     anchor AND the bar's own height, or it sits on top of the nav. */
   transform: translateX(-50%) translateY(calc(100% + var(--nav-h) + 24px));
-  width: min(520px, calc(100vw - 24px));
-  background: rgba(13,13,15,0.94); color: #fff;
-  border-radius: 999px;
-  padding: 8px 10px;
   z-index: 850;
-  box-shadow: 0 18px 48px rgba(0,0,0,0.28);
   opacity: 0;
   visibility: hidden;
+  pointer-events: none;
   transition:
     transform 0.38s cubic-bezier(0.32, 0.72, 0.18, 1),
-    border-radius 0.24s ease,
     opacity 0.24s ease,
     visibility 0s linear 0.38s;
-  will-change: transform; pointer-events: none;
+  will-change: transform;
 }
 .voice-bar.open {
   transform: translateX(-50%) translateY(0);
@@ -1857,151 +1856,280 @@ body.is-dragging * { user-select: none !important; -webkit-user-select: none !im
   pointer-events: auto;
   transition:
     transform 0.38s cubic-bezier(0.32, 0.72, 0.18, 1),
-    border-radius 0.24s ease,
     opacity 0.24s ease,
     visibility 0s;
 }
-.voice-bar.expanded {
-  border-radius: 24px;
-  padding: 12px;
-}
 
-/* Compact mini-player */
+/* Shared circular icon button. */
+.voice-cbtn {
+  flex: none;
+  width: 42px; height: 42px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--surface);
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s, transform 0.1s;
+}
+.voice-cbtn svg { width: 22px; height: 22px; }
+.voice-cbtn:active { background: var(--surface2); transform: scale(0.94); }
+.voice-ghost { background: transparent; color: var(--text-sec); }
+.voice-ghost:active { background: var(--surface); }
+
+/* ── Collapsed pill ── */
 .voice-compact {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow-md);
 }
+.voice-bar.expanded .voice-compact { display: none; }
+
 .voice-compact-toggle {
-  flex: none;
-  width: 40px; height: 40px;
-  background: var(--accent); border-color: transparent;
-  border-radius: 50%;
-  font-size: 1rem;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(231,66,82,0.34);
 }
 .voice-compact-toggle:active { background: var(--accent-h); }
+
 .voice-compact-label {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  overflow: hidden;
+  align-items: flex-start;
+  gap: 1px;
   padding: 0 2px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  color: var(--text);
 }
 .voice-compact-ref {
-  font-size: 0.88rem;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.25;
+  max-width: 100%;
+  font-size: 0.86rem; font-weight: 700; line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .voice-compact-sub {
-  font-size: 0.72rem;
-  opacity: 0.65;
+  max-width: 100%;
+  font-size: 0.7rem; line-height: 1.2; color: var(--accent); font-weight: 600;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.voice-expand-toggle {
-  flex: none;
-  width: 34px; height: 34px;
-  border-radius: 50%;
-  font-size: 0.85rem;
-  transform: rotate(0deg);
-  transition: transform 0.2s ease;
+.voice-compact .voice-cbtn.voice-ghost { width: 34px; height: 34px; }
+.voice-compact .voice-cbtn.voice-ghost svg { width: 18px; height: 18px; }
+
+/* ── Expanded sheet ── */
+.voice-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 16px 18px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  box-shadow: var(--shadow-lg);
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0.18, 1);
 }
-/* When the full panel is open, the mini row is redundant — hide it so the
-   reference and play/pause aren't shown twice. */
-.voice-bar.expanded .voice-compact { display: none; }
+.voice-sheet[hidden] { display: none; }
 
-/* Expanded full player */
-.voice-expanded { display: flex; flex-direction: column; gap: 16px; }
-.voice-expanded[hidden] { display: none; }
-
-.voice-btn {
-  flex: none; width: 44px; height: 44px;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
-  color: #fff; border-radius: 14px; font-size: 1.05rem; line-height: 1;
-  cursor: pointer; transition: background 0.12s, border-color 0.12s, transform 0.1s;
+.voice-grabber {
+  display: flex; justify-content: center;
+  padding: 4px 0 2px;
+  cursor: grab;
+  touch-action: none;
 }
-.voice-btn:active { background: rgba(255,255,255,0.2); transform: scale(0.96); }
-
-/* Header: reference on the left, a clear minimize chevron on the right. */
-.voice-header { display: flex; align-items: center; gap: 12px; padding: 2px 2px 0; }
-.voice-label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.voice-ref { font-size: 1.05rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.voice-sub { font-size: 0.76rem; opacity: 0.6; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.voice-collapse {
-  flex: none; width: 36px; height: 36px; border-radius: 50%;
-  background: rgba(255,255,255,0.06); font-size: 0.7rem;
+.voice-grabber span {
+  width: 42px; height: 5px; border-radius: 999px;
+  background: var(--border2);
 }
 
-/* Centered transport with a single prominent play/pause. */
-.voice-transport { display: flex; align-items: center; justify-content: center; gap: 28px; padding: 2px 0; }
-.voice-prev, .voice-next {
-  width: 54px; height: 54px; border-radius: 50%;
-  background: transparent; border-color: transparent; font-size: 1.45rem; opacity: 0.9;
+.voice-head {
+  display: flex; align-items: center; gap: 10px;
+  touch-action: none;
 }
-.voice-prev:active, .voice-next:active { background: rgba(255,255,255,0.12); }
+.voice-title {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  /* Optically centred: the close button on the right would otherwise pull the
+     title left by half its width. */
+  padding-left: 42px;
+}
+.voice-ref {
+  max-width: 100%;
+  font-size: 1.06rem; font-weight: 800; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.voice-sub {
+  max-width: 100%;
+  font-size: 0.78rem; font-weight: 600; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── Scrubber (file-backed audio only; hidden for Web Speech) ── */
+.voice-scrub {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 2px;
+}
+.voice-scrub[hidden] { display: none; }
+.voice-time {
+  flex: none; min-width: 34px;
+  font-size: 0.72rem; font-weight: 600; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.voice-time-dur { text-align: right; }
+.voice-seek {
+  flex: 1 1 auto; min-width: 0;
+  -webkit-appearance: none; appearance: none;
+  height: 20px; background: none; cursor: pointer;
+  --fill: 0%;
+}
+.voice-seek::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(to right, var(--accent) var(--fill), var(--surface2) var(--fill));
+}
+.voice-seek::-moz-range-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(to right, var(--accent) var(--fill), var(--surface2) var(--fill));
+}
+.voice-seek::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; margin-top: -5px;
+  border-radius: 50%; background: var(--accent);
+  box-shadow: 0 2px 6px rgba(231,66,82,0.45);
+}
+.voice-seek::-moz-range-thumb {
+  width: 14px; height: 14px; border: none;
+  border-radius: 50%; background: var(--accent);
+}
+
+/* ── Transport ── */
+.voice-transport {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 4px;
+  padding: 2px 4px 4px;
+}
+.voice-transport .voice-cbtn { width: 46px; height: 46px; }
+.voice-transport .voice-back10 svg,
+.voice-transport .voice-fwd10 svg { width: 24px; height: 24px; }
+.voice-transport .voice-prev svg,
+.voice-transport .voice-next svg { width: 26px; height: 26px; color: var(--text); }
+
 .voice-toggle {
-  width: 68px; height: 68px; border-radius: 50%;
-  background: var(--accent); border-color: transparent; font-size: 1.55rem;
-  box-shadow: 0 10px 26px rgba(231,66,82,0.4);
+  flex: none;
+  width: 76px; height: 76px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 50%;
+  background: linear-gradient(150deg, #f2596a 0%, var(--accent) 55%, #d3364a 100%);
+  color: #fff;
+  box-shadow: 0 12px 30px rgba(231,66,82,0.42), 0 0 0 8px rgba(231,66,82,0.08);
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.2s;
 }
-.voice-toggle:active { background: var(--accent-h); }
+.voice-toggle svg { width: 30px; height: 30px; }
+.voice-toggle:active { transform: scale(0.95); }
+.voice-bar.is-paused .voice-toggle {
+  box-shadow: 0 8px 20px rgba(231,66,82,0.3), 0 0 0 6px rgba(231,66,82,0.06);
+}
 
-/* Settings, always visible inside the panel. */
-.voice-tray {
-  display: flex; flex-direction: column; gap: 12px;
-  padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);
+/* ── Settings card ── */
+.voice-card {
+  display: flex; flex-direction: column;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  overflow: hidden;
+}
+.voice-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--border);
+}
+.voice-row:last-child { border-bottom: none; }
+.voice-row-ico {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; color: var(--accent);
+}
+.voice-row-ico svg { width: 20px; height: 20px; }
+.voice-row-label {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 0.85rem; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Full-width stop = the obvious "end & dismiss" action. */
-.voice-stop {
-  width: 100%; height: 48px; border-radius: 14px;
-  background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.16);
-  color: #fff; font-family: var(--font-ui); font-size: 0.92rem; font-weight: 700;
-  letter-spacing: 0.01em; cursor: pointer; transition: background 0.12s;
-}
-.voice-stop:active { background: rgba(255,255,255,0.16); }
-.voice-tray-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.voice-tray-label { font-size: 0.82rem; font-weight: 600; opacity: 0.85; }
-.voice-stepper { display: flex; align-items: center; gap: 6px; }
+.voice-stepper { flex: none; display: flex; align-items: center; gap: 6px; }
 .voice-step {
-  width: 38px; height: 38px; border-radius: 12px;
-  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
-  color: #fff; font-size: 1.1rem; line-height: 1; cursor: pointer;
+  width: 34px; height: 34px; border-radius: 11px;
+  background: var(--bg); border: 1px solid var(--border2);
+  color: var(--text); font-size: 1.05rem; line-height: 1; cursor: pointer;
+  transition: background 0.12s;
 }
-.voice-step:active { background: rgba(255,255,255,0.2); }
+.voice-step:active { background: var(--surface); }
 .voice-rate-val, .voice-delay-val {
-  min-width: 48px; text-align: center; font-size: 0.85rem; font-weight: 700;
+  min-width: 44px; text-align: center;
+  font-size: 0.82rem; font-weight: 700; color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+
 .voice-select {
-  flex: 1 1 auto; min-width: 0; max-width: 62%;
-  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
-  color: #fff; border-radius: 12px; padding: 10px;
-  font-family: var(--font-ui); font-size: 0.82rem;
+  flex: none; max-width: 58%;
+  background: var(--bg); border: 1px solid var(--border2);
+  color: var(--text); border-radius: 11px; padding: 9px 10px;
+  font-family: var(--font-ui); font-size: 0.8rem; font-weight: 600;
+  cursor: pointer;
 }
-.voice-select option { color: #000; }
-.voice-repeat-group { display: flex; gap: 6px; }
+
+.voice-seg {
+  flex: none; display: flex; gap: 2px;
+  background: var(--surface);
+  border-radius: 11px; padding: 3px;
+}
 .voice-repeat-btn {
-  padding: 9px 13px; border-radius: 12px;
-  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
-  color: #fff; font-family: var(--font-ui); font-size: 0.8rem; font-weight: 700; cursor: pointer;
+  padding: 7px 11px; border-radius: 9px;
+  background: transparent; border: none;
+  color: var(--text-sec);
+  font-family: var(--font-ui); font-size: 0.76rem; font-weight: 700;
+  cursor: pointer; transition: background 0.14s, color 0.14s;
 }
-.voice-repeat-btn.active { background: var(--accent); border-color: transparent; }
-/* Lift the selection / compare bars above the compact player while it is open. */
-body.voice-active .selection-bar { bottom: calc(var(--nav-h) + 72px); }
-/* When expanded, lift selection bar higher so it clears the full panel. */
-body.voice-active .voice-bar.expanded ~ .selection-bar,
-body.voice-active:has(.voice-bar.expanded) .selection-bar { bottom: calc(var(--nav-h) + 210px); }
+.voice-repeat-btn.active { background: var(--accent); color: #fff; }
+
+/* ── Bottom actions ── */
+.voice-actions { display: flex; align-items: center; gap: 8px; }
+.voice-pill {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 46px; padding: 0 14px;
+  background: var(--bg); border: 1px solid var(--border2);
+  color: var(--text); border-radius: 14px;
+  font-family: var(--font-ui); font-size: 0.8rem; font-weight: 700;
+  cursor: pointer; transition: background 0.12s;
+}
+.voice-pill:active { background: var(--surface); }
+.voice-pill-ico { display: flex; }
+.voice-pill-ico svg { width: 18px; height: 18px; }
+.voice-pill.active { border-color: var(--accent); color: var(--accent); }
+.voice-pill.active .voice-pill-ico { color: var(--accent); }
+
+.voice-pill-primary {
+  flex: 1 1 auto;
+  background: linear-gradient(150deg, #f2596a 0%, var(--accent) 60%, #d3364a 100%);
+  border: none; color: #fff;
+  box-shadow: 0 8px 20px rgba(231,66,82,0.32);
+}
+.voice-pill-primary:active { background: var(--accent-h); }
+
+/* Keep selection / compare bars clear of whichever state is showing. */
+body.voice-active .selection-bar { bottom: calc(var(--nav-h) + 74px); }
+body.voice-active:has(.voice-bar.expanded) .selection-bar { bottom: calc(var(--nav-h) + 430px); }
+
 /* Now-playing verse highlight (reuses the selection palette). */
 .verse-row.verse-speaking {
   background: #fdeced !important; border-color: transparent;
