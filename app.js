@@ -3420,41 +3420,104 @@ function buildCombinedVerseData(verses) {
 
 // ── Stack picker popup ────────────────────────────────
 function openStackPicker() {
-  closeStackPicker();
+  closeStackPicker({ restoreFocus: false });
   const stacks = loadStacks();
   const versesToAdd = [...selectedVerses];
+  const selectedCount = versesToAdd.length;
 
-  const picker = document.createElement('div');
-  picker.className = 'stack-picker';
+  const backdrop = document.createElement('div');
+  backdrop.className = 'stack-add-backdrop';
+  backdrop.dataset.role = 'stack-add';
+  backdrop.setAttribute('aria-hidden', 'true');
 
-  // Header and "+ New Stack" sit outside the scroll area so they stay put
-  // however many stacks there are.
+  // The header and create action stay pinned while only the stack rows scroll.
   const body = stacks.length === 0
-    ? `<div class="stack-picker-empty">No stacks yet</div>`
-    : stacks.map(s => `<div class="stack-picker-item" data-id="${escHtml(s.id)}">${escHtml(s.title)}</div>`).join('');
+    ? `
+      <div class="stack-picker-empty">
+        <span class="stack-picker-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 4 4.5 8 12 12 19.5 8 12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+            <path d="M4.5 12 12 16l7.5-4M4.5 16 12 20l7.5-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <span class="stack-picker-empty-title">No stacks yet</span>
+        <span class="stack-picker-empty-copy">Create one below to save this ${selectedCount === 1 ? 'verse' : 'selection'}.</span>
+      </div>
+    `
+    : stacks.map(stack => {
+        const passageCount = countStackPassages(stack);
+        return `
+          <button class="stack-picker-item stack-add-item" data-id="${escHtml(stack.id)}" type="button">
+            <span class="stack-picker-item-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M12 4.25 4.75 8 12 11.75 19.25 8 12 4.25Z" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round"/>
+                <path d="M5.25 12 12 15.5l6.75-3.5M5.25 15.75 12 19.25l6.75-3.5" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="stack-picker-item-copy">
+              <span class="stack-picker-item-title">${escHtml(stack.title)}</span>
+              <span class="stack-picker-item-meta">${passageCount} saved passage${passageCount !== 1 ? 's' : ''}</span>
+            </span>
+            <span class="stack-picker-chevron" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none"><path d="m7.5 5 5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+          </button>
+        `;
+      }).join('');
 
-  picker.innerHTML = `
-    <div class="stack-picker-head">Add to stack</div>
-    <div class="stack-picker-scroll">${body}</div>
-    <button class="stack-picker-new">+ New Stack</button>
+  backdrop.innerHTML = `
+    <section class="stack-picker stack-add-picker" role="dialog" aria-modal="true" aria-labelledby="stack-add-title" tabindex="-1">
+      <div class="stack-picker-head">
+        <div class="stack-picker-head-copy">
+          <h2 class="stack-add-title" id="stack-add-title">Choose a stack</h2>
+          <p class="stack-picker-subtitle">Save ${selectedCount} selected verse${selectedCount !== 1 ? 's' : ''}</p>
+        </div>
+        <button class="stack-picker-close" type="button" aria-label="Close stack picker">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="stack-picker-scroll">${body}</div>
+      <div class="stack-picker-footer">
+        <button class="stack-picker-new" type="button">
+          <span class="stack-picker-new-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20" fill="none"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <span class="stack-picker-new-copy">
+            <span class="stack-picker-new-title">Create a new stack</span>
+            <span class="stack-picker-new-meta">Start a fresh collection</span>
+          </span>
+        </button>
+      </div>
+    </section>
   `;
 
-  document.body.appendChild(picker);
-  activePicker = picker;
+  backdrop.returnFocusElement = document.activeElement;
+  document.body.appendChild(backdrop);
+  activePicker = backdrop;
 
-  // Position above the current selection/action bar
-  const barHeight = document.getElementById('selection-bar')?.offsetHeight ?? 72;
-  const gap = barHeight + 16;
-  picker.style.position = 'fixed';
-  picker.style.bottom = `calc(${gap}px + env(safe-area-inset-bottom))`;
-  picker.style.left = '50%';
-  picker.style.transform = 'translateX(-50%)';
-  // Anchored by its bottom edge, the list would otherwise grow straight off
-  // the top of the screen and clip the first stacks with no way to reach them.
-  picker.style.maxHeight =
-    `calc(100vh - ${gap}px - env(safe-area-inset-bottom) - env(safe-area-inset-top) - 28px)`;
+  // Prefer to clear the entire selection bar, including its nav offset. Keep a
+  // usable minimum sheet area if the expanded voice player leaves little room.
+  const selectionBar = document.getElementById('selection-bar');
+  const selectionBarTop = selectionBar?.getBoundingClientRect().top ?? (window.innerHeight - 96);
+  const preferredBottomGap = Math.max(16, window.innerHeight - selectionBarTop + 12);
+  const maxUsableBottomGap = Math.max(16, window.innerHeight - 300);
+  const bottomGap = Math.min(preferredBottomGap, maxUsableBottomGap);
+  backdrop.style.setProperty('--stack-picker-bottom', `${bottomGap}px`);
 
-  picker.querySelectorAll('.stack-picker-item').forEach(item => {
+  const picker = backdrop.querySelector('.stack-add-picker');
+  picker.addEventListener('click', e => e.stopPropagation());
+  backdrop.addEventListener('click', closeStackPicker);
+  backdrop.querySelector('.stack-picker-close').addEventListener('click', e => {
+    e.stopPropagation();
+    closeStackPicker();
+  });
+  backdrop.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    closeStackPicker();
+  });
+
+  backdrop.querySelectorAll('.stack-add-item').forEach(item => {
     item.addEventListener('click', e => {
       e.stopPropagation();
       addVerseToStack(item.dataset.id, buildCombinedVerseData(versesToAdd));
@@ -3463,9 +3526,9 @@ function openStackPicker() {
     });
   });
 
-  picker.querySelector('.stack-picker-new').addEventListener('click', async e => {
+  backdrop.querySelector('.stack-picker-new').addEventListener('click', async e => {
     e.stopPropagation();
-    closeStackPicker();
+    closeStackPicker({ restoreFocus: false });
     const title = await showPrompt('Name your stack', 'e.g. Healing, Faith, Promises…');
     if (!title) return;
     const stks = loadStacks();
@@ -3477,9 +3540,12 @@ function openStackPicker() {
     clearSelection();
   });
 
-  setTimeout(() => {
-    document.addEventListener('click', closeStackPicker, { once: true });
-  }, 0);
+  requestAnimationFrame(() => {
+    if (activePicker !== backdrop) return;
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    picker.focus({ preventScroll: true });
+  });
 }
 
 function openStackSwitcher() {
@@ -3530,7 +3596,7 @@ function openStackSwitcher() {
 
   backdrop.querySelector('.stack-picker-new')?.addEventListener('click', async e => {
     e.stopPropagation();
-    closeStackPicker();
+    closeStackPicker({ restoreFocus: false });
     const title = await showPrompt('Name your stack', 'e.g. Healing, Faith, Promises…');
     if (!title) return;
     const stks = loadStacks();
@@ -3543,7 +3609,7 @@ function openStackSwitcher() {
   });
 }
 
-function closeStackPicker() {
+function closeStackPicker({ restoreFocus = true } = {}) {
   if (!activePicker) return;
   const picker = activePicker;
   activePicker = null;
@@ -3551,6 +3617,19 @@ function closeStackPicker() {
   if (picker.dataset.role === 'stack-switcher') {
     picker.classList.remove('open');
     setTimeout(() => picker.remove(), 220);
+    return;
+  }
+
+  if (picker.dataset.role === 'stack-add') {
+    const returnFocusElement = picker.returnFocusElement;
+    picker.classList.remove('open');
+    picker.setAttribute('aria-hidden', 'true');
+    setTimeout(() => {
+      picker.remove();
+      if (restoreFocus && returnFocusElement?.isConnected) {
+        returnFocusElement.focus({ preventScroll: true });
+      }
+    }, 220);
     return;
   }
 

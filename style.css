@@ -2226,21 +2226,106 @@ body.theme-dark .verse-row.verse-speaking {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-/* Title and "+ New Stack" are pinned; only the list between them scrolls, so
-   the first stack is never stranded above the top of the screen. */
+
+/* Add-to-stack is a compact action sheet. Its bottom edge is normally measured
+   from the visible selection bar, while the list itself remains height-capped. */
+.stack-add-backdrop {
+  --stack-picker-bottom: calc(var(--nav-h) + 104px);
+  position: fixed;
+  inset: 0;
+  z-index: 910;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: max(14px, env(safe-area-inset-top)) 12px 0;
+  background: rgba(8,8,12,0);
+  -webkit-backdrop-filter: blur(0);
+  backdrop-filter: blur(0);
+  transition: background 0.22s ease, backdrop-filter 0.22s ease;
+}
+.stack-add-backdrop.open {
+  background: rgba(8,8,12,0.28);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.stack-add-backdrop .stack-add-picker {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: min(430px, calc(100vw - 24px));
+  max-height: min(440px, calc(100vh - var(--stack-picker-bottom) - env(safe-area-inset-top) - 18px));
+  max-height: min(440px, calc(100dvh - var(--stack-picker-bottom) - env(safe-area-inset-top) - 18px));
+  margin-bottom: var(--stack-picker-bottom);
+  border-radius: 24px;
+  border-color: var(--border);
+  box-shadow: 0 26px 70px rgba(8,8,12,0.26), 0 3px 12px rgba(8,8,12,0.08);
+  animation: none;
+  opacity: 0;
+  transform: translateY(18px) scale(0.985);
+  transform-origin: center bottom;
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+  outline: none;
+}
+.stack-add-backdrop.open .stack-add-picker {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
 .stack-picker-head {
   flex: none;
-  padding: 13px 16px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 17px 16px 14px 19px;
   border-bottom: 1px solid var(--border);
-  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em;
-  text-transform: uppercase; color: var(--text-muted);
+}
+.stack-picker-head-copy {
+  min-width: 0;
+}
+.stack-add-title {
+  font-size: 1.08rem;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+  color: var(--text);
+}
+.stack-picker-subtitle {
+  margin-top: 3px;
+  font-size: 0.76rem;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.stack-picker-close {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg2);
+  color: var(--text-sec);
+  cursor: pointer;
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+.stack-picker-close svg {
+  width: 17px;
+  height: 17px;
+}
+.stack-picker-close:active {
+  transform: scale(0.94);
+  background: var(--surface2);
 }
 .stack-picker-scroll {
-  flex: 1 1 auto; min-height: 0;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 4px 0;
+  padding: 6px 8px;
 }
 .stack-picker-item {
   padding: 11px 16px;
@@ -2248,7 +2333,119 @@ body.theme-dark .verse-row.verse-speaking {
   cursor: pointer; transition: background 0.1s;
 }
 .stack-picker-item:active { background: var(--accent-light); color: var(--accent); }
-.stack-picker-empty { padding: 14px 16px; font-size: 0.88rem; color: var(--text-muted); }
+.stack-add-item {
+  position: relative;
+  width: 100%;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 15px;
+  background: transparent;
+  text-align: left;
+  font-family: var(--font-ui);
+  color: var(--text);
+  transition: background 0.14s ease, transform 0.14s ease;
+}
+.stack-add-item:active {
+  background: var(--accent-dim);
+  color: var(--text);
+  transform: scale(0.99);
+}
+.stack-picker-item-icon {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 13px;
+  background: var(--bg2);
+  color: var(--text-sec);
+}
+.stack-picker-item-icon svg {
+  width: 21px;
+  height: 21px;
+}
+.stack-picker-item-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.stack-picker-item-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.94rem;
+  line-height: 1.25;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stack-picker-item-meta {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.stack-picker-chevron {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.stack-picker-chevron svg {
+  width: 16px;
+  height: 16px;
+}
+.stack-picker-empty {
+  min-height: 160px;
+  padding: 24px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  text-align: center;
+  color: var(--text-muted);
+}
+.stack-picker-empty-icon {
+  width: 46px;
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+  border-radius: 15px;
+  background: var(--bg2);
+  color: var(--text-sec);
+}
+.stack-picker-empty-icon svg {
+  width: 24px;
+  height: 24px;
+}
+.stack-picker-empty-title {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.stack-picker-empty-copy {
+  max-width: 230px;
+  margin-top: 4px;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+.stack-picker-footer {
+  flex: none;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
 .stack-picker-new {
   flex: none;
   display: block; width: 100%;
@@ -2261,6 +2458,64 @@ body.theme-dark .verse-row.verse-speaking {
   transition: background 0.1s;
 }
 .stack-picker-new:active { background: var(--accent-light); }
+.stack-add-picker .stack-picker-new {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 16px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  text-align: left;
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+.stack-add-picker .stack-picker-new:active {
+  background: var(--accent-light);
+  transform: scale(0.99);
+}
+.stack-picker-new-icon {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 13px;
+  background: var(--accent);
+  color: #fff;
+}
+.stack-picker-new-icon svg {
+  width: 19px;
+  height: 19px;
+}
+.stack-picker-new-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.stack-picker-new-title {
+  font-size: 0.9rem;
+  line-height: 1.2;
+  font-weight: 800;
+}
+.stack-picker-new-meta {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.2;
+  font-weight: 600;
+}
+@media (hover: hover) and (pointer: fine) {
+  .stack-add-item:hover { background: var(--bg2); }
+  .stack-picker-close:hover { background: var(--surface); }
+  .stack-add-picker .stack-picker-new:hover { background: var(--accent-light); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stack-add-backdrop,
+  .stack-add-backdrop .stack-add-picker { transition: none; }
+}
 
 /* ── Toast ────────────────────────────────── */
 .toast {
