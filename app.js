@@ -90,10 +90,14 @@ let stackSyncPromise = null;
 let stackSyncWarned  = false;
 let lastScrollState  = null;
 let scrollStateSaveTimer = null;
+let chapterRequestId = 0;
+let searchRequestId = 0;
+let authReturnFocus = null;
+const sheetCloseTimers = new WeakMap();
+const sheetReturnFocus = new WeakMap();
 // Migrate away from removed translations
 if (!TRANSLATIONS[activeTranslation]) { activeTranslation = 'kjv'; localStorage.setItem('active_translation', 'kjv'); }
 if (!['traditional', 'alphabetical'].includes(bookOrderMode)) bookOrderMode = 'traditional';
-const cardTranslations = new Map(); // idx → translation override for stack cards
 
 function triggerHaptic(pattern = 16) {
   // Prefer native haptics when running inside a Capacitor shell (iOS/Android app).
@@ -121,14 +125,36 @@ function triggerHaptic(pattern = 16) {
   return false;
 }
 
-function openSheet(backdrop) {
+function prefersReducedMotion() {
+  return !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+}
+
+function openSheet(backdrop, { trigger = document.activeElement } = {}) {
+  const closeTimer = sheetCloseTimers.get(backdrop);
+  if (closeTimer) clearTimeout(closeTimer);
+  sheetCloseTimers.delete(backdrop);
+  if (trigger instanceof HTMLElement && !backdrop.contains(trigger)) {
+    sheetReturnFocus.set(backdrop, trigger);
+  }
+  backdrop.setAttribute('aria-hidden', 'false');
   backdrop.classList.remove('hidden');
   requestAnimationFrame(() => backdrop.classList.add('open'));
 }
 
-function closeSheet(backdrop) {
+function closeSheet(backdrop, { restoreFocus = true } = {}) {
+  if (backdrop.classList.contains('hidden') && !backdrop.classList.contains('open')) return;
+  const existingTimer = sheetCloseTimers.get(backdrop);
+  if (existingTimer) clearTimeout(existingTimer);
   backdrop.classList.remove('open');
-  setTimeout(() => backdrop.classList.add('hidden'), 380);
+  backdrop.setAttribute('aria-hidden', 'true');
+  const returnFocus = sheetReturnFocus.get(backdrop);
+  const timer = setTimeout(() => {
+    sheetCloseTimers.delete(backdrop);
+    if (backdrop.classList.contains('open')) return;
+    backdrop.classList.add('hidden');
+    if (restoreFocus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  }, prefersReducedMotion() ? 0 : 380);
+  sheetCloseTimers.set(backdrop, timer);
 }
 
 function syncBottomNavChrome() {
@@ -340,24 +366,33 @@ function openBookSheet() {
   renderBookList();
   resetBookSheetInlineMotion();
   bookSheet.classList.remove('dragging');
+  bookPickerBtn.setAttribute('aria-expanded', 'true');
   openSheet(bookSheetBackdrop);
+  setTimeout(() => bookSheet.focus({ preventScroll: true }), prefersReducedMotion() ? 0 : 60);
 }
 
 function closeBookSheet() {
   resetBookSheetInlineMotion();
   bookSheet.classList.remove('dragging');
+  bookPickerBtn.setAttribute('aria-expanded', 'false');
   closeSheet(bookSheetBackdrop);
 }
 
 function openSearchSheet() {
   showPaneChrome(biblePane);
+  searchRequestId += 1;
+  searchBtn.disabled = false;
+  searchBtn.textContent = 'Search';
+  searchResults.setAttribute('aria-busy', 'false');
+  searchOpenBtn.setAttribute('aria-expanded', 'true');
   openSheet(searchSheetBackdrop);
-  setTimeout(() => searchInput.focus(), 60);
+  setTimeout(() => searchInput.focus(), prefersReducedMotion() ? 0 : 60);
   // Start warming the embedding model in the background so the first query is fast.
   preloadEmbedder().catch(() => {});
 }
 
 function closeSearchSheet() {
+  searchOpenBtn.setAttribute('aria-expanded', 'false');
   closeSheet(searchSheetBackdrop);
 }
 
@@ -390,6 +425,10 @@ function finishBookSheetCloseImmediately() {
   bookSheet.classList.remove('dragging');
   bookSheetBackdrop.classList.remove('open');
   bookSheetBackdrop.classList.add('hidden');
+  bookSheetBackdrop.setAttribute('aria-hidden', 'true');
+  bookPickerBtn.setAttribute('aria-expanded', 'false');
+  const returnFocus = sheetReturnFocus.get(bookSheetBackdrop);
+  if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
 }
 
 function snapBookSheetTo(offsetY, onComplete) {
@@ -427,11 +466,15 @@ searchSheetBackdrop.addEventListener('click', e => {
   if (e.target === searchSheetBackdrop) closeSearchSheet();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    closeBookSheet();
-    closeSearchSheet();
-    closeAuthModal();
-  }
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (!modalBackdrop.classList.contains('hidden') || !greekPage.classList.contains('hidden')) return;
+  if (activePicker) { e.preventDefault(); closeStackPicker(); return; }
+  if (activeTranslationPicker) { e.preventDefault(); closeTranslationPicker(); return; }
+  if (!compareBackdrop.classList.contains('hidden')) { e.preventDefault(); closeCompare(); return; }
+  if (!settingsSheetBackdrop.classList.contains('hidden')) { e.preventDefault(); closeSettings(); return; }
+  if (!authBackdrop.classList.contains('hidden')) { e.preventDefault(); closeAuthModal(); return; }
+  if (!searchSheetBackdrop.classList.contains('hidden')) { e.preventDefault(); closeSearchSheet(); return; }
+  if (!bookSheetBackdrop.classList.contains('hidden')) { e.preventDefault(); closeBookSheet(); }
 });
 bookPickerBtn.addEventListener('click', openBookSheet);
 searchOpenBtn.addEventListener('click', openSearchSheet);
@@ -450,6 +493,11 @@ authBackdrop.addEventListener('click', e => {
 authSignInBtn.addEventListener('click', () => { void handleAuthSubmit('sign-in'); });
 authSignUpBtn.addEventListener('click', () => { void handleAuthSubmit('sign-up'); });
 authSignOutBtn.addEventListener('click', () => { void handleSignOut(); });
+authEmailInput.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || authUser) return;
+  e.preventDefault();
+  authPasswordInput.focus();
+});
 authPasswordInput.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !authUser) {
     e.preventDefault();
@@ -537,19 +585,50 @@ function openTranslationPicker(anchorEl, currentKey, onSelect) {
     return;
   }
   closeTranslationPicker();
-  const picker = document.createElement('div');
-  picker.className = 'translation-picker';
-  picker.style.cssText = ''; // positioning handled by CSS
-  picker.innerHTML = `<div class="translation-picker-title">Select Translation</div>` +
-    Object.entries(TRANSLATIONS).map(([key, label]) => `
-    <div class="translation-picker-item${key === currentKey ? ' active' : ''}" data-key="${key}">${label}</div>
-  `).join('');
-  document.body.appendChild(picker);
-  activeTranslationPicker = picker;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'translation-picker-backdrop';
+  backdrop.setAttribute('aria-hidden', 'true');
+  backdrop.innerHTML = `
+    <section class="translation-picker" role="dialog" aria-modal="true" aria-labelledby="translation-picker-title" tabindex="-1">
+      <div class="translation-picker-head">
+        <div>
+          <h2 class="translation-picker-title" id="translation-picker-title">Choose a translation</h2>
+          <p class="translation-picker-subtitle">Updates the reader and future searches</p>
+        </div>
+        <button class="translation-picker-close" type="button" aria-label="Close translation picker">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="translation-picker-list">
+        ${Object.entries(TRANSLATIONS).map(([key, label]) => `
+          <button class="translation-picker-item${key === currentKey ? ' active' : ''}" data-key="${key}" type="button" aria-pressed="${key === currentKey}">
+            <span>${label}</span>
+            <span class="translation-picker-check" aria-hidden="true">${key === currentKey ? '✓' : ''}</span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+  `;
+  backdrop.returnFocusElement = anchorEl;
+  document.body.appendChild(backdrop);
+  activeTranslationPicker = backdrop;
   activeTranslationPickerAnchor = anchorEl;
-  requestAnimationFrame(() => picker.classList.add('open'));
+  anchorEl?.setAttribute('aria-expanded', 'true');
 
-  picker.querySelectorAll('.translation-picker-item').forEach(item => {
+  const picker = backdrop.querySelector('.translation-picker');
+  picker.addEventListener('click', e => e.stopPropagation());
+  backdrop.addEventListener('click', closeTranslationPicker);
+  backdrop.querySelector('.translation-picker-close').addEventListener('click', e => {
+    e.stopPropagation();
+    closeTranslationPicker();
+  });
+  backdrop.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    closeTranslationPicker();
+  });
+
+  backdrop.querySelectorAll('.translation-picker-item').forEach(item => {
     item.addEventListener('click', e => {
       e.stopPropagation();
       onSelect(item.dataset.key);
@@ -557,16 +636,28 @@ function openTranslationPicker(anchorEl, currentKey, onSelect) {
     });
   });
 
-  setTimeout(() => document.addEventListener('click', closeTranslationPicker, { once: true }), 0);
+  requestAnimationFrame(() => {
+    if (activeTranslationPicker !== backdrop) return;
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    picker.focus({ preventScroll: true });
+  });
 }
 
-function closeTranslationPicker() {
+function closeTranslationPicker({ restoreFocus = true } = {}) {
   if (!activeTranslationPicker) return;
-  const picker = activeTranslationPicker;
+  const backdrop = activeTranslationPicker;
+  const anchor = activeTranslationPickerAnchor;
   activeTranslationPicker = null;
   activeTranslationPickerAnchor = null;
-  picker.classList.remove('open');
-  setTimeout(() => picker.remove(), 380);
+  anchor?.setAttribute('aria-expanded', 'false');
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden', 'true');
+  setTimeout(() => {
+    backdrop.remove();
+    const returnFocus = backdrop.returnFocusElement;
+    if (restoreFocus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  }, prefersReducedMotion() ? 0 : 220);
 }
 
 translationLabel.textContent = TRANSLATIONS[activeTranslation] || activeTranslation.toUpperCase();
@@ -592,6 +683,25 @@ function escHtml(str) {
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
+function debounce(fn, wait = 200) {
+  let timer = null;
+  let latestArgs = [];
+  const wrapped = (...args) => {
+    latestArgs = args;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...latestArgs);
+    }, wait);
+  };
+  wrapped.flush = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = null;
+    fn(...latestArgs);
+  };
+  return wrapped;
+}
 function getCurrentVerseData(vnum) {
   const verse = currentVerses.find(v => v.verse === vnum);
   if (!verse || !activeBook || !activeChapter) return null;
@@ -600,7 +710,8 @@ function getCurrentVerseData(vnum) {
     book: activeBook.name,
     chapter: activeChapter,
     verse: vnum,
-    text: verse.text
+    text: verse.text,
+    translation: activeTranslation
   };
 }
 
@@ -619,8 +730,11 @@ function updateBibleChrome() {
 }
 
 function syncBookOrderTabs() {
-  otTab.classList.toggle('active', bookOrderMode === 'traditional');
-  ntTab.classList.toggle('active', bookOrderMode === 'alphabetical');
+  const isTraditional = bookOrderMode === 'traditional';
+  otTab.classList.toggle('active', isTraditional);
+  ntTab.classList.toggle('active', !isTraditional);
+  otTab.setAttribute('aria-pressed', String(isTraditional));
+  ntTab.setAttribute('aria-pressed', String(!isTraditional));
 }
 
 function setBookOrderMode(mode) {
@@ -641,18 +755,20 @@ function getOrderedBooks() {
 
 async function getBookChapterCount(book) {
   if (!book) return 1;
-  if (bookChapterCounts.has(book.id)) return bookChapterCounts.get(book.id);
+  const translation = activeTranslation;
+  const cacheKey = `${translation}:${book.id}`;
+  if (bookChapterCounts.has(cacheKey)) return bookChapterCounts.get(cacheKey);
 
   const { data } = await supabase
     .from('verses')
     .select('chapter')
     .eq('book_id', book.id)
-    .eq('translation', activeTranslation)
+    .eq('translation', translation)
     .order('chapter', { ascending: false })
     .limit(1);
 
   const total = data?.[0]?.chapter ?? 1;
-  bookChapterCounts.set(book.id, total);
+  bookChapterCounts.set(cacheKey, total);
   return total;
 }
 
@@ -664,8 +780,13 @@ function updateNavState() {
   stacksPane.setAttribute('aria-hidden', String(onBible));
   navBible.classList.toggle('active', onBible);
   navStacks.classList.toggle('active', !onBible);
-  navBible.setAttribute('aria-current', onBible ? 'page' : 'false');
-  navStacks.setAttribute('aria-current', onBible ? 'false' : 'page');
+  if (onBible) {
+    navBible.setAttribute('aria-current', 'page');
+    navStacks.removeAttribute('aria-current');
+  } else {
+    navBible.removeAttribute('aria-current');
+    navStacks.setAttribute('aria-current', 'page');
+  }
 }
 
 function updateSearchEmptyState(message = 'Search within the selected translation or jump to a passage reference.') {
@@ -675,7 +796,7 @@ function updateSearchEmptyState(message = 'Search within the selected translatio
 function focusVerseRow(verseNum) {
   const row = verseArea.querySelector(`.verse-row[data-vnum="${verseNum}"]`);
   if (!row) return;
-  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
   row.classList.add('verse-focus');
   setTimeout(() => row.classList.remove('verse-focus'), 1400);
 }
@@ -749,19 +870,27 @@ const modalConfirm  = document.getElementById('modal-confirm');
 
 function showPrompt(title, placeholder = '') {
   return new Promise(resolve => {
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    let settled = false;
     modalTitle.textContent = title;
     modalInput.placeholder = placeholder;
     modalInput.value = '';
     modalInput.style.display = 'block';
     modalConfirm.textContent = 'Create';
+    modalBackdrop.setAttribute('aria-hidden', 'false');
     modalBackdrop.classList.remove('hidden');
-    setTimeout(() => modalInput.focus(), 50);
+    setTimeout(() => modalInput.focus(), prefersReducedMotion() ? 0 : 50);
 
     function done(val) {
+      if (settled) return;
+      settled = true;
       modalBackdrop.classList.add('hidden');
+      modalBackdrop.setAttribute('aria-hidden', 'true');
       modalCancel.removeEventListener('click', cancel);
       modalConfirm.removeEventListener('click', confirm);
       modalInput.removeEventListener('keydown', keydown);
+      modalBackdrop.removeEventListener('click', backdropClick);
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
       resolve(val);
     }
     function confirm() { const v = modalInput.value.trim(); done(v || null); }
@@ -770,26 +899,37 @@ function showPrompt(title, placeholder = '') {
       if (e.key === 'Enter') confirm();
       if (e.key === 'Escape') cancel();
     }
+    function backdropClick(e) { if (e.target === modalBackdrop) cancel(); }
     modalConfirm.addEventListener('click', confirm);
     modalCancel.addEventListener('click', cancel);
     modalInput.addEventListener('keydown', keydown);
+    modalBackdrop.addEventListener('click', backdropClick);
   });
 }
 
 function showConfirm(title, confirmLabel = 'Delete') {
   return new Promise(resolve => {
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    let settled = false;
     modalTitle.textContent = title;
     modalInput.style.display = 'none';
     modalConfirm.textContent = confirmLabel;
     modalConfirm.classList.add('danger');
+    modalBackdrop.setAttribute('aria-hidden', 'false');
     modalBackdrop.classList.remove('hidden');
+    setTimeout(() => modalCancel.focus(), prefersReducedMotion() ? 0 : 50);
 
     function done(val) {
+      if (settled) return;
+      settled = true;
       modalBackdrop.classList.add('hidden');
+      modalBackdrop.setAttribute('aria-hidden', 'true');
       modalConfirm.classList.remove('danger');
       modalCancel.removeEventListener('click', cancel);
       modalConfirm.removeEventListener('click', confirm);
       document.removeEventListener('keydown', keydown);
+      modalBackdrop.removeEventListener('click', backdropClick);
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
       resolve(val);
     }
     function confirm() { done(true); }
@@ -798,9 +938,11 @@ function showConfirm(title, confirmLabel = 'Delete') {
       if (e.key === 'Escape') cancel();
       if (e.key === 'Enter') confirm();
     }
+    function backdropClick(e) { if (e.target === modalBackdrop) cancel(); }
     modalConfirm.addEventListener('click', confirm);
     modalCancel.addEventListener('click', cancel);
     document.addEventListener('keydown', keydown);
+    modalBackdrop.addEventListener('click', backdropClick);
   });
 }
 
@@ -927,23 +1069,28 @@ function renderBookList() {
   ordered.forEach(book => {
     const item = document.createElement('div');
     const isExpanded = expandedBookId === book.id;
+    const chapterCacheKey = `${activeTranslation}:${book.id}`;
+    const chapterGridId = `book-chapters-${String(book.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     item.className = 'book-item-wrap' + (isExpanded ? ' expanded' : '');
 
     const button = document.createElement('button');
     button.className = 'book-item' + (activeBook?.id === book.id ? ' active' : '');
     button.type = 'button';
     button.setAttribute('aria-expanded', String(isExpanded));
+    button.setAttribute('aria-controls', chapterGridId);
     button.innerHTML = `
       <span class="book-item-label">${escHtml(book.name)}</span>
-      <span class="book-item-caret" aria-hidden="true">${isExpanded ? '^' : 'v'}</span>
+      <span class="book-item-caret" aria-hidden="true">
+        <svg viewBox="0 0 20 20" fill="none"><path d="m5.5 7.5 4.5 4.5 4.5-4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
     `;
     button.addEventListener('click', () => {
       expandedBookId = isExpanded ? null : book.id;
       renderBookList();
-      if (!isExpanded && !bookChapterCounts.has(book.id) && !pendingChapterCountLoads.has(book.id)) {
-        pendingChapterCountLoads.add(book.id);
+      if (!isExpanded && !bookChapterCounts.has(chapterCacheKey) && !pendingChapterCountLoads.has(chapterCacheKey)) {
+        pendingChapterCountLoads.add(chapterCacheKey);
         getBookChapterCount(book).finally(() => {
-          pendingChapterCountLoads.delete(book.id);
+          pendingChapterCountLoads.delete(chapterCacheKey);
           if (expandedBookId === book.id) renderBookList();
         });
       }
@@ -951,16 +1098,17 @@ function renderBookList() {
     item.appendChild(button);
 
     if (isExpanded) {
-      const total = bookChapterCounts.get(book.id);
       const grid = document.createElement('div');
       grid.className = 'book-chapter-grid';
+      grid.id = chapterGridId;
 
+      const total = bookChapterCounts.get(chapterCacheKey);
       if (!total) {
         grid.innerHTML = `<div class="book-chapter-loading">Loading chapters...</div>`;
-        if (!pendingChapterCountLoads.has(book.id)) {
-          pendingChapterCountLoads.add(book.id);
+        if (!pendingChapterCountLoads.has(chapterCacheKey)) {
+          pendingChapterCountLoads.add(chapterCacheKey);
           getBookChapterCount(book).finally(() => {
-            pendingChapterCountLoads.delete(book.id);
+            pendingChapterCountLoads.delete(chapterCacheKey);
             if (expandedBookId === book.id) renderBookList();
           });
         }
@@ -970,6 +1118,8 @@ function renderBookList() {
           chapterBtn.className = 'book-chapter-btn' + (activeBook?.id === book.id && activeChapter === i ? ' active' : '');
           chapterBtn.type = 'button';
           chapterBtn.textContent = i;
+          chapterBtn.setAttribute('aria-label', `${book.name} chapter ${i}`);
+          if (activeBook?.id === book.id && activeChapter === i) chapterBtn.setAttribute('aria-current', 'page');
           chapterBtn.addEventListener('click', () => selectBookChapter(book, i));
           grid.appendChild(chapterBtn);
         }
@@ -983,7 +1133,7 @@ function renderBookList() {
 
   const activeRow = bookList.querySelector('.book-item-wrap.expanded') || bookList.querySelector('.book-item.active');
   if (activeRow) {
-    requestAnimationFrame(() => activeRow.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+    requestAnimationFrame(() => activeRow.scrollIntoView({ block: 'nearest', behavior: 'auto' }));
   }
 }
 
@@ -1000,10 +1150,11 @@ async function selectBookChapter(book, chapter) {
   activeChapter = chapter;
   expandedBookId = book.id;
   updateBibleChrome();
-  const totalChapters = await getBookChapterCount(book);
-  renderChapterBar(totalChapters);
   closeBookSheet();
+  const chapterCountPromise = getBookChapterCount(book);
   await selectChapter(chapter);
+  const totalChapters = await chapterCountPromise;
+  if (activeBook?.id === book.id && activeChapter === chapter) renderChapterBar(totalChapters);
 }
 
 // ── Chapter bar ───────────────────────────────────────
@@ -1016,41 +1167,55 @@ function renderChapterBar(total) {
 // ── Select chapter ────────────────────────────────────
 async function selectChapter(num) {
   if (!activeBook) return;
+  const requestId = ++chapterRequestId;
+  const book = activeBook;
+  const translation = activeTranslation;
+  const isCurrentRequest = () => requestId === chapterRequestId
+    && activeBook?.id === book.id
+    && activeChapter === num
+    && activeTranslation === translation;
+
   Voice.stopScripture();
   activeChapter = num;
   updateBibleChrome();
   renderBookList();
+  clearSelection();
+  currentVerses = [];
+  greekByVerse = {};
 
   verseArea.innerHTML = `<div class="state-msg"><span class="spinner"></span> Loading…</div>`;
 
   const { data, error } = await supabase
     .from('verses')
     .select('verse, text')
-    .eq('book_id', activeBook.id)
+    .eq('book_id', book.id)
     .eq('chapter', num)
-    .eq('translation', activeTranslation)
+    .eq('translation', translation)
     .order('verse');
 
+  if (!isCurrentRequest()) return;
   if (error || !data?.length) {
     verseArea.innerHTML = `<div class="state-msg">No verses found.</div>`;
     return;
   }
 
-  clearSelection();
-  greekByVerse = {};
-  if (activeBook.testament === 'new') {
+  const nextGreekByVerse = {};
+  if (book.testament === 'new') {
     const { data: greek } = await supabase
       .from('nt_word_tags')
       .select('verse, position, word, transliteration, gloss, strongs')
-      .eq('book_id', activeBook.id)
+      .eq('book_id', book.id)
       .eq('chapter', num)
       .order('verse').order('position');
+    if (!isCurrentRequest()) return;
     (greek ?? []).forEach(w => {
-      if (!greekByVerse[w.verse]) greekByVerse[w.verse] = [];
-      greekByVerse[w.verse].push(w);
+      if (!nextGreekByVerse[w.verse]) nextGreekByVerse[w.verse] = [];
+      nextGreekByVerse[w.verse].push(w);
     });
   }
 
+  if (!isCurrentRequest()) return;
+  greekByVerse = nextGreekByVerse;
   renderVerses(data);
 }
 
@@ -1080,10 +1245,10 @@ function renderVerses(verses) {
     const greekWords = greekByVerse[v.verse] ?? [];
     const hasGreek = isNT && greekWords.length > 0;
     html += `
-      <div class="verse-row${hasGreek ? ' has-greek' : ''}" ${hasGreek ? `data-verse="${v.verse}"` : ''} data-vnum="${v.verse}">
+      <button class="verse-row${hasGreek ? ' has-greek' : ''}" type="button" aria-pressed="false" aria-label="Select ${escHtml(activeBook.name)} ${activeChapter}:${v.verse}" ${hasGreek ? `data-verse="${v.verse}"` : ''} data-vnum="${v.verse}">
         <span class="verse-num">${v.verse}</span>
         <span class="verse-text">${escHtml(v.text)}</span>
-      </div>
+      </button>
     `;
   });
   html += `</section>`;
@@ -1131,6 +1296,7 @@ const compareBackdrop = document.getElementById('compare-backdrop');
 const compareSheet    = document.getElementById('compare-sheet');
 const compareRef      = document.getElementById('compare-ref');
 const compareBody     = document.getElementById('compare-body');
+let compareRequestId  = 0;
 
 function sortVersesForCompare(verses) {
   return [...verses].sort((a, b) => {
@@ -1168,27 +1334,26 @@ function renderComparePassageRows(rows, anchor) {
 }
 
 function closeCompare() {
-  compareBackdrop.classList.remove('open');
-  setTimeout(() => compareBackdrop.classList.add('hidden'), 380);
-  if (stackCompareMode) clearStackCompareMode();
-  else dismissStackCompareBar();
-  if (verseActionMode) clearSelection();
-  else dismissSelectionBar();
+  if (compareBackdrop.classList.contains('hidden')) return;
+  compareRequestId += 1;
+  closeSheet(compareBackdrop);
 }
 document.getElementById('compare-close').addEventListener('click', closeCompare);
 compareBackdrop.addEventListener('click', e => { if (e.target === compareBackdrop) closeCompare(); });
 
 async function openCompare(ref, bookId, chapter, verse) {
+  const requestId = ++compareRequestId;
   compareRef.textContent = ref;
   compareBody.innerHTML = '<div class="compare-loading"><span class="spinner"></span> Loading…</div>';
-  compareBackdrop.classList.remove('hidden');
-  requestAnimationFrame(() => compareBackdrop.classList.add('open'));
+  openSheet(compareBackdrop);
+  setTimeout(() => compareSheet.focus({ preventScroll: true }), prefersReducedMotion() ? 0 : 60);
 
   const { data, error } = await supabase
     .from('verses').select('translation, text')
     .eq('book_id', bookId).eq('chapter', chapter).eq('verse', verse)
     .order('translation');
 
+  if (requestId !== compareRequestId) return;
   if (error || !data?.length) {
     compareBody.innerHTML = '<div class="compare-loading">No data found.</div>';
     return;
@@ -1202,10 +1367,11 @@ async function openCompareSelectedVerses(verses) {
   const sorted = sortVersesForCompare(verses);
   if (!sorted.length) return;
 
+  const requestId = ++compareRequestId;
   compareRef.textContent = buildCombinedVerseData(sorted).ref;
   compareBody.innerHTML = '<div class="compare-loading"><span class="spinner"></span> Loading…</div>';
-  compareBackdrop.classList.remove('hidden');
-  requestAnimationFrame(() => compareBackdrop.classList.add('open'));
+  openSheet(compareBackdrop);
+  setTimeout(() => compareSheet.focus({ preventScroll: true }), prefersReducedMotion() ? 0 : 60);
 
   const sections = await Promise.all(sorted.map(async verse => {
     const book = allBooks.find(b => b.name === verse.book) ?? activeBook;
@@ -1231,6 +1397,7 @@ async function openCompareSelectedVerses(verses) {
     };
   }));
 
+  if (requestId !== compareRequestId) return;
   const grouped = new Map();
   sections.filter(Boolean).forEach(section => {
     section.rows.forEach(row => {
@@ -1304,7 +1471,13 @@ function getActiveStackComparePassages() {
 
 function syncStackCompareRows() {
   stackDetail.querySelectorAll('.stack-verse-card.action-active').forEach(card => card.classList.remove('action-active'));
-  stackDetail.querySelectorAll('.stack-verse-row.stack-selected').forEach(row => row.classList.remove('stack-selected'));
+  stackDetail.querySelectorAll('.stack-verse-row').forEach(row => {
+    row.classList.remove('stack-selected');
+    row.removeAttribute('role');
+    row.removeAttribute('tabindex');
+    row.removeAttribute('aria-checked');
+  });
+  stackDetail.querySelectorAll('.compare-card-btn').forEach(btn => btn.setAttribute('aria-pressed', 'false'));
 
   const active = getActiveStackCard();
   if (!active) return;
@@ -1318,10 +1491,13 @@ function syncStackCompareRows() {
   const card = stackDetail.querySelector(`.stack-verse-card[data-idx="${active.idx}"]`);
   if (!card) return;
   card.classList.add('action-active');
+  card.querySelector('.compare-card-btn')?.setAttribute('aria-pressed', 'true');
 
-  if (!stackCompareSelectedRefs.length) return;
   const selected = new Set(stackCompareSelectedRefs);
   card.querySelectorAll('.stack-verse-row').forEach(row => {
+    row.setAttribute('role', 'checkbox');
+    row.setAttribute('tabindex', '0');
+    row.setAttribute('aria-checked', String(selected.has(row.dataset.passageRef)));
     if (selected.has(row.dataset.passageRef)) {
       row.classList.add('stack-selected');
     }
@@ -1376,7 +1552,6 @@ function toggleStackComparePassage(cardIdx, passageRef) {
 async function openActiveStackCompare() {
   const verses = getActiveStackComparePassages();
   if (!verses.length) return;
-  dismissStackCompareBar();
   await openCompareSelectedVerses(verses);
 }
 
@@ -1398,6 +1573,8 @@ function updateStackCompareBar() {
     bar = document.createElement('div');
     bar.id = 'stack-selection-bar';
     bar.className = 'selection-bar stack-compare-bar';
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'Translation comparison selection');
     document.body.appendChild(bar);
     requestAnimationFrame(() => bar.classList.add('open'));
   }
@@ -1407,10 +1584,10 @@ function updateStackCompareBar() {
   bar.innerHTML = `
     <div class="sel-head">
       <span class="sel-count">${countLabel}</span>
-      <button class="sel-done-btn" title="Done">Done</button>
+      <button class="sel-done-btn" type="button" title="Done">Done</button>
     </div>
     <div class="sel-actions">
-      <button class="sel-secondary-btn">Compare</button>
+      <button class="sel-secondary-btn" type="button">Compare</button>
     </div>
   `;
 
@@ -1428,10 +1605,21 @@ function updateStackCompareBar() {
 stackDetail.addEventListener('click', e => {
   const target = e.target instanceof Element ? e.target : null;
   if (!target) return;
+  if (target.closest('button, input, textarea, select, a')) return;
   const row = target.closest('.stack-verse-row');
   if (!row || appMode !== 'stacks' || !stackCompareMode) return;
   const card = row.closest('.stack-verse-card');
   if (!card || parseInt(card.dataset.idx) !== activeStackCompareIdx) return;
+  toggleStackComparePassage(card.dataset.idx, row.dataset.passageRef);
+});
+
+stackDetail.addEventListener('keydown', e => {
+  if (!['Enter', ' '].includes(e.key) || appMode !== 'stacks' || !stackCompareMode) return;
+  const row = e.target instanceof Element ? e.target.closest('.stack-verse-row') : null;
+  if (!row) return;
+  const card = row.closest('.stack-verse-card');
+  if (!card || parseInt(card.dataset.idx) !== activeStackCompareIdx) return;
+  e.preventDefault();
   toggleStackComparePassage(card.dataset.idx, row.dataset.passageRef);
 });
 
@@ -1455,6 +1643,7 @@ function selectVerseRange(fromVerse, toVerse) {
     if (!verseData || !row || selectedVerses.some(v => v.ref === verseData.ref)) continue;
     selectedVerses.push(verseData);
     row.classList.add('selected');
+    row.setAttribute('aria-pressed', 'true');
     changed = true;
   }
 
@@ -1469,10 +1658,15 @@ verseArea.addEventListener('click', e => {
   const row = target.closest('.verse-row');
   if (!row || appMode !== 'bible') return;
   if (Date.now() < suppressVerseTapUntil) return;
-  if (!verseActionMode) return;
 
   const verseData = getCurrentVerseData(parseInt(row.dataset.vnum));
   if (!verseData) return;
+
+  if (!verseActionMode) {
+    startVerseActionMode(verseData, row);
+    triggerHaptic(12);
+    return;
+  }
 
   if (e.shiftKey && activeActionVerseNum != null) {
     selectVerseRange(activeActionVerseNum, verseData.verse);
@@ -1481,29 +1675,16 @@ verseArea.addEventListener('click', e => {
   }
 
   const isSelected = row.classList.contains('selected');
-  if (!isSelected) {
+  if (isSelected) {
     toggleVerseSelection(verseData, row, null);
-    setActiveBibleVerse(verseData.verse);
-    return;
-  }
-
-  if (activeActionVerseNum !== verseData.verse) {
-    setActiveBibleVerse(verseData.verse);
-    return;
-  }
-
-  if (selectedVerses.length > 1) {
-    toggleVerseSelection(verseData, row, null);
-    if (activeActionVerseNum === verseData.verse) {
+    if (selectedVerses.length) {
       const fallback = selectedVerses[selectedVerses.length - 1];
       setActiveBibleVerse(fallback?.verse ?? null);
-    } else {
-      syncBibleActionRows();
-      updateSelectionBar();
     }
     return;
   }
 
+  toggleVerseSelection(verseData, row, null);
   setActiveBibleVerse(verseData.verse);
 });
 
@@ -1625,7 +1806,7 @@ verseArea.addEventListener('selectstart', e => {
 async function showGreekPage(verseNum, verseText, greekWords) {
   greekPage.innerHTML = `
     <div class="gp-header">
-      <button class="gp-back" id="gp-back">&#8592; Back</button>
+      <button class="gp-back" id="gp-back" type="button">&#8592; Back</button>
       <div class="gp-ref">${escHtml(activeBook.name)} ${activeChapter}:${verseNum}</div>
     </div>
     <div class="gp-scroll">
@@ -1944,13 +2125,17 @@ function mergeAndRankSearchResults(query, semanticRows = [], keywordRows = []) {
 }
 
 async function doSearch() {
+  if (searchBtn.disabled) return;
   const query = searchInput.value.trim();
   if (!query) {
     updateSearchEmptyState();
     return;
   }
+  const requestId = ++searchRequestId;
+  const isCurrentRequest = () => requestId === searchRequestId;
   searchBtn.disabled = true;
-  searchBtn.textContent = '...';
+  searchBtn.textContent = 'Searching…';
+  searchResults.setAttribute('aria-busy', 'true');
   try {
     // Reference parser still wins for direct lookups like "John 3:16"
     const ref = parseReference(query);
@@ -1974,6 +2159,7 @@ async function doSearch() {
     try {
       keywordRows = await keywordPromise;
     } catch {}
+    if (!isCurrentRequest()) return;
 
     let queryVec;
     let semanticRows = [];
@@ -1986,9 +2172,11 @@ async function doSearch() {
         match_count: 120,
         target_translation: activeTranslation,
       });
+      if (!isCurrentRequest()) return;
       if (error) {
         if (!keywordRows.length) {
-          updateSearchEmptyState(`Search error: ${error.message}`);
+          console.error('Semantic search failed', error);
+          updateSearchEmptyState('Search is temporarily unavailable. Please try again.');
           return;
         }
       } else {
@@ -1996,11 +2184,13 @@ async function doSearch() {
       }
     } catch (err) {
       if (!keywordRows.length) {
-        updateSearchEmptyState(`Couldn't load search model: ${err.message || err}`);
+        console.error('Search model failed to load', err);
+        updateSearchEmptyState('Smart search could not start. Check your connection and try again.');
         return;
       }
     }
 
+    if (!isCurrentRequest()) return;
     const data = mergeAndRankSearchResults(query, semanticRows, keywordRows);
     if (!data?.length) {
       updateSearchEmptyState(`No results for "${query}"`);
@@ -2011,12 +2201,12 @@ async function doSearch() {
     data.forEach((v, idx) => {
       const refLabel = `${v.book_name} ${v.chapter}:${v.verse}`;
       html += `
-        <div class="result-item" data-idx="${idx}">
+        <div class="result-item" data-idx="${idx}" role="group" tabindex="0" aria-label="Open ${escHtml(refLabel)}">
           <div class="result-item-header">
             <div class="result-ref">${escHtml(refLabel)}</div>
             <div class="result-actions">
-              ${Voice.isSupported ? `<button class="result-play-btn" data-idx="${idx}" title="Listen" aria-label="Listen to this verse">▶</button>` : ''}
-              <button class="add-btn" data-idx="${idx}" title="Add to a Study Stack">+</button>
+              ${Voice.isSupported ? `<button class="result-play-btn" data-idx="${idx}" type="button" title="Listen" aria-label="Listen to this verse">▶</button>` : ''}
+              <button class="add-btn" data-idx="${idx}" type="button" title="Select verse" aria-label="Select verse" aria-pressed="false">+</button>
             </div>
           </div>
           <div class="result-text">${escHtml(v.text)}</div>
@@ -2027,14 +2217,21 @@ async function doSearch() {
     searchResults.innerHTML = html;
 
     searchResults.querySelectorAll('.result-item').forEach(item => {
-      item.addEventListener('click', async e => {
-        if (e.target.closest('.add-btn')) return;
+      const openResult = async e => {
+        if (e.target.closest('.add-btn, .result-play-btn')) return;
         const v = data[parseInt(item.dataset.idx)];
         const book = allBooks.find(entry => entry.id === v.book_id);
         if (!book) return;
+        clearSelection();
         closeSearchSheet();
         await openBibleLocation(book, v.chapter);
         focusVerseRow(v.verse);
+      };
+      item.addEventListener('click', openResult);
+      item.addEventListener('keydown', e => {
+        if (e.target !== item || !['Enter', ' '].includes(e.key)) return;
+        e.preventDefault();
+        void openResult(e);
       });
     });
 
@@ -2047,7 +2244,8 @@ async function doSearch() {
           book: v.book_name,
           chapter: v.chapter,
           verse: v.verse,
-          text: v.text
+          text: v.text,
+          translation: activeTranslation
         }, btn.closest('.result-item'), btn);
       });
     });
@@ -2060,8 +2258,11 @@ async function doSearch() {
       });
     });
   } finally {
-    searchBtn.disabled = false;
-    searchBtn.textContent = 'Search';
+    if (isCurrentRequest()) {
+      searchBtn.disabled = false;
+      searchBtn.textContent = 'Search';
+      searchResults.setAttribute('aria-busy', 'false');
+    }
   }
 }
 
@@ -2093,15 +2294,21 @@ ntTab.addEventListener('click', () => setBookOrderMode('alphabetical'));
 // ── Search events ─────────────────────────────────────
 searchBtn.addEventListener('click', doSearch);
 searchInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') doSearch();
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    void doSearch();
+  }
 });
 
 // ── Arrow key chapter navigation ──────────────────────
 document.addEventListener('keydown', e => {
-  if (e.target === searchInput) return;
+  const target = e.target instanceof Element ? e.target : null;
+  if (target?.closest('button, input, textarea, select, a, [contenteditable="true"]')) return;
+  if (appMode !== 'bible') return;
   if (!greekPage.classList.contains('hidden')) return;
+  if (document.querySelector('.sheet-backdrop:not(.hidden), .modal-backdrop:not(.hidden), .compare-backdrop:not(.hidden), .translation-picker-backdrop, .stack-add-backdrop, .stack-switcher-backdrop')) return;
   if (!activeBook || !activeChapter) return;
-  const maxChapter = Number(chapterBar.dataset.totalChapters || bookChapterCounts.get(activeBook.id) || activeChapter);
+  const maxChapter = Number(chapterBar.dataset.totalChapters || bookChapterCounts.get(`${activeTranslation}:${activeBook.id}`) || activeChapter);
   if (e.key === 'ArrowRight') {
     if (activeChapter < maxChapter) {
       selectChapter(activeChapter + 1);
@@ -2118,8 +2325,8 @@ document.addEventListener('keydown', e => {
       if (prevBook) selectBook(prevBook);
     }
   }
-  if (e.key === 'ArrowDown') { e.preventDefault(); bibleContent.scrollBy({ top: 120, behavior: 'smooth' }); }
-  if (e.key === 'ArrowUp')   { e.preventDefault(); bibleContent.scrollBy({ top: -120, behavior: 'smooth' }); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); bibleContent.scrollBy({ top: 120, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }); }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); bibleContent.scrollBy({ top: -120, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }); }
 });
 
 
@@ -2150,7 +2357,8 @@ function normalizeStackCard(card) {
   return {
     passages,
     note: String(card?.note || ''),
-    addedAt: Number(card?.addedAt) || nowTs()
+    addedAt: Number(card?.addedAt) || nowTs(),
+    translation: TRANSLATIONS[card?.translation] ? card.translation : 'kjv'
   };
 }
 
@@ -2332,15 +2540,29 @@ async function importStacksFromText(rawText) {
 }
 
 function openAuthModal() {
+  authReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   refreshAuthUi();
+  authBackdrop.setAttribute('aria-hidden', 'false');
   authBackdrop.classList.remove('hidden');
-  if (!authUser) setTimeout(() => authEmailInput.focus(), 50);
+  accountBtn.setAttribute('aria-expanded', 'true');
+  authOpenBtn.setAttribute('aria-expanded', 'true');
+  setTimeout(() => {
+    if (authBackdrop.classList.contains('hidden')) return;
+    if (!authUser) authEmailInput.focus();
+    else authBackdrop.querySelector('.auth-modal')?.focus({ preventScroll: true });
+  }, prefersReducedMotion() ? 0 : 50);
 }
 
 function closeAuthModal() {
+  if (authBackdrop.classList.contains('hidden')) return;
   authBackdrop.classList.add('hidden');
+  authBackdrop.setAttribute('aria-hidden', 'true');
+  accountBtn.setAttribute('aria-expanded', 'false');
+  authOpenBtn.setAttribute('aria-expanded', 'false');
   authPasswordInput.value = '';
   setAuthFeedback('');
+  if (authReturnFocus?.isConnected) authReturnFocus.focus({ preventScroll: true });
+  authReturnFocus = null;
 }
 
 async function flushStackSync() {
@@ -2613,19 +2835,19 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
     <div class="stack-view">
       <div class="stack-view-header">
         <input class="stack-title-input" id="stack-title-input"
-          value="${escHtml(stack.title)}" maxlength="60" placeholder="Stack title…" />
-        <button class="delete-stack-btn" id="delete-stack-btn">Delete Stack</button>
+          value="${escHtml(stack.title)}" maxlength="60" placeholder="Stack title…" aria-label="Stack title" />
+        <button class="delete-stack-btn" id="delete-stack-btn" type="button">Delete Stack</button>
       </div>
       <div class="stack-verse-count">${countStackPassages(stack)} saved passage${countStackPassages(stack) !== 1 ? 's' : ''} across ${stack.verses.length} card${stack.verses.length !== 1 ? 's' : ''}</div>
       <div class="stack-add-bar">
-        <input class="stack-add-input" id="stack-add-input" placeholder="Search to add a verse…" autocomplete="off" />
-        <button class="stack-add-search-btn" id="stack-add-search-btn">Add</button>
+        <input class="stack-add-input" id="stack-add-input" type="search" placeholder="Search words or enter a reference…" autocomplete="off" enterkeyhint="search" aria-label="Find a verse to add" />
+        <button class="stack-add-search-btn" id="stack-add-search-btn" type="button">Search</button>
       </div>
-      <div class="stack-add-results" id="stack-add-results"></div>
+      <div class="stack-add-results" id="stack-add-results" aria-live="polite"></div>
   `;
 
   if (stack.verses.length === 0) {
-    html += `<div class="state-msg stack-empty-state"><strong>No saved cards yet.</strong>Long-press or right-click verses in the Bible reader to add them here, then expand each card with notes or comparison tools.</div>`;
+    html += `<div class="state-msg stack-empty-state"><strong>No saved cards yet.</strong>Tap a verse in the Bible reader, then choose Add to Stack. You can also search above.</div>`;
   } else {
     stack.verses.forEach((v, idx) => {
       const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
@@ -2649,48 +2871,51 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
                  data-passage-ref="${escHtml(p.ref)}">
               ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
               <div class="stack-verse-text">${escHtml(p.text)}</div>
-              ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" title="Remove">×</button>` : ''}
+              ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" type="button" title="Remove passage" aria-label="Remove ${escHtml(p.ref)}">×</button>` : ''}
             </div>`;
       }).join('');
       html += `
         <div class="stack-verse-card${isActiveCard ? ' action-active' : ''}" data-idx="${idx}">
           <div class="stack-verse-card-header">
             <span class="stack-verse-ref">${escHtml(cardRef)}</span>
-            <button class="remove-verse-btn" data-idx="${idx}" title="Remove card">×</button>
+            <button class="remove-verse-btn" data-idx="${idx}" type="button" title="Remove card" aria-label="Remove saved card">×</button>
           </div>
           ${passagesHtml}
           <div class="stack-card-actions">
-            <button class="add-passage-btn" data-idx="${idx}" title="Add scripture">
+            <button class="add-passage-btn" data-idx="${idx}" type="button" title="Add scripture" aria-label="Add scripture to this card" aria-expanded="false">
               <svg class="stack-action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               </svg>
               <span class="stack-action-label">Add</span>
             </button>
-            <button class="note-toggle" data-idx="${idx}" title="Note">
+            <button class="note-toggle" data-idx="${idx}" type="button" title="Note" aria-label="${hasNote ? 'Edit' : 'Add'} note" aria-expanded="${!!hasNote}">
               <svg class="stack-action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M6 14.2 5 15l.8-2.6L13 5.2a1.6 1.6 0 0 1 2.2 0l.6.6a1.6 1.6 0 0 1 0 2.2L8.6 15.2l-2.6.8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
               </svg>
               <span class="stack-action-label">Note</span>
             </button>
-            <button class="compare-card-btn" data-idx="${idx}" title="Compare translations">
+            <button class="compare-card-btn" data-idx="${idx}" type="button" title="Compare translations" aria-pressed="${isActiveCard}">
               <svg class="stack-action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M3.8 7.2h12.4M12.8 4.4l3.4 2.8-3.4 2.8M16.2 12.8H3.8M7.2 15.6l-3.4-2.8L7.2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
               <span class="stack-action-label">Compare</span>
             </button>
-            ${Voice.isSupported ? `<button class="listen-card-btn" data-idx="${idx}" title="Listen to this card">
+            ${Voice.isSupported ? `<button class="listen-card-btn" data-idx="${idx}" type="button" title="Listen to this card">
               <svg class="stack-action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M6 4.5 15 10l-9 5.5z" fill="currentColor"/>
               </svg>
               <span class="stack-action-label">Listen</span>
             </button>` : ''}
-            <button class="card-translation-btn" data-idx="${idx}" title="Switch translation">${TRANSLATIONS[cardTranslations.get(idx) || 'kjv']}</button>
+            <button class="card-translation-btn" data-idx="${idx}" type="button" title="Switch translation" aria-label="Switch card translation">${TRANSLATIONS[v.translation || 'kjv']}</button>
           </div>
           <div class="add-passage-area hidden">
-            <input class="add-passage-input" data-cardidx="${idx}" placeholder="Search and press Enter…" autocomplete="off" />
-            <div class="add-passage-results"></div>
+            <div class="add-passage-search-row">
+              <input class="add-passage-input" data-cardidx="${idx}" type="search" placeholder="Words or reference…" autocomplete="off" enterkeyhint="search" aria-label="Find scripture to add to this card" />
+              <button class="add-passage-search-btn" type="button">Search</button>
+            </div>
+            <div class="add-passage-results" aria-live="polite"></div>
           </div>
-          <textarea class="stack-note${hasNote ? '' : ' hidden'}" data-idx="${idx}" placeholder="Add a note…">${escHtml(v.note || '')}</textarea>
+          <textarea class="stack-note${hasNote ? '' : ' hidden'}" data-idx="${idx}" placeholder="Add a note…" aria-label="Note for ${escHtml(cardRef)}">${escHtml(v.note || '')}</textarea>
         </div>
       `;
     });
@@ -2712,9 +2937,13 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
     });
   }
 
-  stackDetail.querySelector('#stack-title-input')?.addEventListener('input', e => {
-    updateStackTitle(id, e.target.value);
-  });
+  const titleInput = stackDetail.querySelector('#stack-title-input');
+  if (titleInput) {
+    const commitTitle = debounce(value => updateStackTitle(id, value), 180);
+    titleInput.addEventListener('input', e => commitTitle(e.target.value));
+    titleInput.addEventListener('blur', commitTitle.flush);
+    titleInput.addEventListener('change', commitTitle.flush);
+  }
 
   stackDetail.querySelector('#delete-stack-btn')?.addEventListener('click', async () => {
     const ok = await showConfirm(`Delete "${stack.title}"?`);
@@ -2723,7 +2952,7 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
 
   stackDetail.querySelectorAll('.remove-verse-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const ok = await showConfirm('Remove this verse?', 'Remove');
+      const ok = await showConfirm('Remove this saved card?', 'Remove');
       if (ok) removeVerseFromStack(id, parseInt(btn.dataset.idx));
     });
   });
@@ -2731,8 +2960,10 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
   stackDetail.querySelectorAll('.add-passage-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const area = btn.closest('.stack-verse-card').querySelector('.add-passage-area');
-      area.classList.toggle('hidden');
-      if (!area.classList.contains('hidden')) area.querySelector('.add-passage-input').focus();
+      const opening = area.classList.contains('hidden');
+      area.classList.toggle('hidden', !opening);
+      btn.setAttribute('aria-expanded', String(opening));
+      if (opening) area.querySelector('.add-passage-input').focus();
     });
   });
 
@@ -2748,61 +2979,95 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
   });
 
   stackDetail.querySelectorAll('.remove-passage-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      removePassageFromCard(id, parseInt(btn.dataset.cardidx), parseInt(btn.dataset.pi));
+    btn.addEventListener('click', async () => {
+      const ok = await showConfirm('Remove this passage from the card?', 'Remove');
+      if (ok) removePassageFromCard(id, parseInt(btn.dataset.cardidx), parseInt(btn.dataset.pi));
     });
   });
 
   stackDetail.querySelectorAll('.add-passage-input').forEach(input => {
     const cardIdx = parseInt(input.dataset.cardidx);
-    const resultsEl = input.nextElementSibling;
+    const area = input.closest('.add-passage-area');
+    const resultsEl = area.querySelector('.add-passage-results');
+    const searchButton = area.querySelector('.add-passage-search-btn');
+    let passageSearchId = 0;
 
-    async function searchAndShow() {
-      const q = input.value.trim();
-      if (!q) return;
-      resultsEl.innerHTML = `<div class="add-passage-loading">Searching…</div>`;
-
-      const ref = parseReference(q);
-      if (ref && ref.chapter) {
-        const { data, error } = await supabase
-          .from('verses').select('verse, text')
-          .eq('book_id', ref.book.id).eq('chapter', ref.chapter).eq('translation', activeTranslation).order('verse');
-        if (error || !data?.length) { resultsEl.innerHTML = `<div class="add-passage-loading">No results.</div>`; return; }
-        const verses = ref.verseStart
-          ? data.filter(v => v.verse >= ref.verseStart && v.verse <= (ref.verseEnd ?? ref.verseStart))
-          : data;
-        resultsEl.innerHTML = verses.map((v, i) => `
-          <div class="add-passage-result-row" data-idx="${i}">
-            <div class="add-passage-result-ref">${escHtml(ref.book.name)} ${ref.chapter}:${v.verse}</div>
-            <div class="add-passage-result-text">${escHtml(v.text.slice(0, 80))}…</div>
-          </div>`).join('');
-        resultsEl.querySelectorAll('.add-passage-result-row').forEach((row, i) => {
-          row.addEventListener('click', () => {
-            const v = verses[i];
-            addPassageToCard(id, cardIdx, { ref: `${ref.book.name} ${ref.chapter}:${v.verse}`, text: v.text });
-          });
-        });
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('verses').select('verse, chapter, text, book_id, books(name)')
-        .eq('translation', activeTranslation).ilike('text', `%${q}%`).limit(20);
-      if (error || !data?.length) { resultsEl.innerHTML = `<div class="add-passage-loading">No results.</div>`; return; }
-      resultsEl.innerHTML = data.map((rv, i) => `
-        <div class="add-passage-result-row" data-idx="${i}">
-          <div class="add-passage-result-ref">${escHtml(rv.books.name)} ${rv.chapter}:${rv.verse}</div>
-          <div class="add-passage-result-text">${escHtml(rv.text.slice(0, 80))}…</div>
-        </div>`).join('');
+    function renderPassageResults(passages) {
+      resultsEl.innerHTML = passages.map((passage, i) => `
+        <button class="add-passage-result-row" data-idx="${i}" type="button" aria-label="Add ${escHtml(passage.ref)}">
+          <span class="add-passage-result-copy">
+            <span class="add-passage-result-ref">${escHtml(passage.ref)}</span>
+            <span class="add-passage-result-text">${escHtml(passage.text)}</span>
+          </span>
+          <span class="add-passage-result-action" aria-hidden="true">Add</span>
+        </button>`).join('');
       resultsEl.querySelectorAll('.add-passage-result-row').forEach(row => {
         row.addEventListener('click', () => {
-          const rv = data[parseInt(row.dataset.idx)];
-          addPassageToCard(id, cardIdx, { ref: `${rv.books.name} ${rv.chapter}:${rv.verse}`, text: rv.text });
+          const passage = passages[parseInt(row.dataset.idx)];
+          if (passage) addPassageToCard(id, cardIdx, passage);
         });
       });
     }
 
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') searchAndShow(); });
+    async function searchAndShow() {
+      if (searchButton.disabled) return;
+      const q = input.value.trim();
+      if (!q) return;
+      const requestId = ++passageSearchId;
+      const cardData = stack.verses[cardIdx];
+      const translation = cardData?.translation || activeTranslation;
+      searchButton.disabled = true;
+      searchButton.textContent = 'Searching…';
+      resultsEl.setAttribute('aria-busy', 'true');
+      resultsEl.innerHTML = `<div class="add-passage-loading">Searching…</div>`;
+
+      try {
+        const ref = parseReference(q);
+        let passages = [];
+        let error = null;
+
+        if (ref?.chapter) {
+          const response = await supabase
+            .from('verses').select('verse, text')
+            .eq('book_id', ref.book.id).eq('chapter', ref.chapter).eq('translation', translation).order('verse');
+          error = response.error;
+          const verses = ref.verseStart
+            ? (response.data ?? []).filter(v => v.verse >= ref.verseStart && v.verse <= (ref.verseEnd ?? ref.verseStart))
+            : (response.data ?? []);
+          passages = verses.map(v => ({ ref: `${ref.book.name} ${ref.chapter}:${v.verse}`, text: v.text }));
+        } else {
+          const response = await supabase
+            .from('verses').select('verse, chapter, text, book_id, books(name)')
+            .eq('translation', translation).ilike('text', `%${q}%`).limit(20);
+          error = response.error;
+          passages = (response.data ?? []).map(v => {
+            const bookName = Array.isArray(v.books) ? v.books[0]?.name : v.books?.name;
+            return { ref: `${bookName || 'Bible'} ${v.chapter}:${v.verse}`, text: v.text };
+          });
+        }
+
+        if (requestId !== passageSearchId || !resultsEl.isConnected) return;
+        if (error) console.error('Card passage search failed', error);
+        if (error || !passages.length) {
+          resultsEl.innerHTML = `<div class="add-passage-loading">No results found.</div>`;
+          return;
+        }
+        renderPassageResults(passages);
+      } finally {
+        if (requestId === passageSearchId && searchButton.isConnected) {
+          searchButton.disabled = false;
+          searchButton.textContent = 'Search';
+          resultsEl.setAttribute('aria-busy', 'false');
+        }
+      }
+    }
+
+    searchButton.addEventListener('click', () => { void searchAndShow(); });
+    input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      void searchAndShow();
+    });
   });
 
   stackDetail.querySelectorAll('.compare-card-btn').forEach(btn => {
@@ -2822,21 +3087,22 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
       const ta = btn.closest('.stack-verse-card').querySelector('.stack-note');
       const opening = ta.classList.contains('hidden');
       ta.classList.toggle('hidden', !opening);
+      btn.setAttribute('aria-expanded', String(opening));
       if (opening) ta.focus();
     });
   });
 
   stackDetail.querySelectorAll('.stack-note').forEach(ta => {
-    ta.addEventListener('input', () => {
-      updateVerseNote(id, parseInt(ta.dataset.idx), ta.value);
-    });
+    const commitNote = debounce(value => updateVerseNote(id, parseInt(ta.dataset.idx), value), 240);
+    ta.addEventListener('input', () => commitNote(ta.value));
+    ta.addEventListener('blur', commitNote.flush);
   });
 
   stackDetail.querySelectorAll('.card-translation-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
       const idx = parseInt(btn.dataset.idx);
-      const current = cardTranslations.get(idx) || 'kjv';
+      const current = stack.verses[idx]?.translation || 'kjv';
       openTranslationPicker(btn, current, async next => {
         const card = btn.closest('.stack-verse-card');
         if (!card) return;
@@ -2855,14 +3121,24 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
           // Re-fetch each passage in the new translation.
           const fetched = await Promise.all(passages.map(async p => {
             const m = p.ref.match(/^(.+?)\s+(\d+):(\d+)$/);
-            if (!m) return p;
+            if (!m) return null;
             const [, bookName, ch, verse] = m;
             const book = allBooks.find(b => b.name.toLowerCase() === bookName.toLowerCase());
-            if (!book) return p;
+            if (!book) return null;
             const { data } = await supabase.from('verses').select('text')
               .eq('book_id', book.id).eq('chapter', parseInt(ch)).eq('verse', parseInt(verse)).eq('translation', next).single();
-            return { ref: p.ref, text: data?.text ?? p.text };
+            return data?.text ? { ref: p.ref, text: data.text } : null;
           }));
+
+          if (fetched.some(p => !p)) {
+            showToast(`${TRANSLATIONS[next]} is unavailable for part of this card`);
+            return;
+          }
+
+          v.passages = fetched;
+          v.translation = next;
+          touchStack(stack);
+          saveStacks(stacks);
 
           // Update just the verse rows in this card.
           const rows = card.querySelectorAll('.stack-verse-row');
@@ -2871,7 +3147,6 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
             if (textEl) textEl.textContent = p.text;
           });
 
-          cardTranslations.set(idx, next);
           btn.textContent = TRANSLATIONS[next];
         } finally {
           requestAnimationFrame(() => {
@@ -2887,46 +3162,94 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
   const addInput = document.getElementById('stack-add-input');
   const addBtn   = document.getElementById('stack-add-search-btn');
   const addResults = document.getElementById('stack-add-results');
+  let stackSearchId = 0;
 
   async function doStackSearch() {
+    if (addBtn.disabled) return;
     const q = addInput.value.trim();
     if (!q) return;
+    const requestId = ++stackSearchId;
+    const translation = activeTranslation;
+    addBtn.disabled = true;
+    addBtn.textContent = 'Searching…';
+    addResults.setAttribute('aria-busy', 'true');
     addResults.innerHTML = `<div class="stack-add-loading">Searching…</div>`;
-    const { data, error } = await supabase
-      .from('verses')
-      .select('verse, chapter, text, book_id, books(name)')
-      .eq('translation', activeTranslation)
-      .ilike('text', `%${q}%`)
-      .limit(30);
-    if (error || !data?.length) {
-      addResults.innerHTML = `<div class="stack-add-loading">No results.</div>`;
-      return;
-    }
-    addResults.innerHTML = data.map((v, i) => `
-      <div class="stack-add-result-row">
-        <div class="stack-add-result-ref">${escHtml(v.books.name)} ${v.chapter}:${v.verse}</div>
-        <div class="stack-add-result-text">${escHtml(v.text)}</div>
-        <button class="stack-add-result-btn" data-idx="${i}">+ Add</button>
-      </div>
-    `).join('');
-    addResults.querySelectorAll('.stack-add-result-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const v = data[parseInt(btn.dataset.idx)];
-        addVerseToStack(id, {
-          ref: `${v.books.name} ${v.chapter}:${v.verse}`,
-          book: v.books.name,
-          chapter: v.chapter,
-          verse: v.verse,
-          text: v.text
+
+    try {
+      const ref = parseReference(q);
+      let results = [];
+      let error = null;
+
+      if (ref?.chapter) {
+        const response = await supabase
+          .from('verses').select('verse, chapter, text, book_id')
+          .eq('book_id', ref.book.id)
+          .eq('chapter', ref.chapter)
+          .eq('translation', translation)
+          .order('verse');
+        error = response.error;
+        const verses = ref.verseStart
+          ? (response.data ?? []).filter(v => v.verse >= ref.verseStart && v.verse <= (ref.verseEnd ?? ref.verseStart))
+          : (response.data ?? []);
+        results = verses.map(v => ({ ...v, bookName: ref.book.name }));
+      } else {
+        const response = await supabase
+          .from('verses')
+          .select('verse, chapter, text, book_id, books(name)')
+          .eq('translation', translation)
+          .ilike('text', `%${q}%`)
+          .limit(30);
+        error = response.error;
+        results = (response.data ?? []).map(v => ({
+          ...v,
+          bookName: (Array.isArray(v.books) ? v.books[0]?.name : v.books?.name) || 'Bible'
+        }));
+      }
+
+      if (requestId !== stackSearchId || !addResults.isConnected) return;
+      if (error) console.error('Stack verse search failed', error);
+      if (error || !results.length) {
+        addResults.innerHTML = `<div class="stack-add-loading">No results found.</div>`;
+        return;
+      }
+
+      addResults.innerHTML = results.map((v, i) => `
+        <div class="stack-add-result-row">
+          <div class="stack-add-result-copy">
+            <div class="stack-add-result-ref">${escHtml(v.bookName)} ${v.chapter}:${v.verse}</div>
+            <div class="stack-add-result-text">${escHtml(v.text)}</div>
+          </div>
+          <button class="stack-add-result-btn" data-idx="${i}" type="button" aria-label="Add ${escHtml(v.bookName)} ${v.chapter}:${v.verse} to this stack">+ Add</button>
+        </div>
+      `).join('');
+      addResults.querySelectorAll('.stack-add-result-btn').forEach(resultBtn => {
+        resultBtn.addEventListener('click', () => {
+          const v = results[parseInt(resultBtn.dataset.idx)];
+          addVerseToStack(id, {
+            ref: `${v.bookName} ${v.chapter}:${v.verse}`,
+            book: v.bookName,
+            chapter: v.chapter,
+            verse: v.verse,
+            text: v.text,
+            translation
+          });
         });
-        btn.textContent = '✓ Added';
-        btn.disabled = true;
       });
-    });
+    } finally {
+      if (requestId === stackSearchId && addBtn.isConnected) {
+        addBtn.disabled = false;
+        addBtn.textContent = 'Search';
+        addResults.setAttribute('aria-busy', 'false');
+      }
+    }
   }
 
-  addBtn.addEventListener('click', doStackSearch);
-  addInput.addEventListener('keydown', e => { if (e.key === 'Enter') doStackSearch(); });
+  addBtn.addEventListener('click', () => { void doStackSearch(); });
+  addInput.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    void doStackSearch();
+  });
 }
 
 // ── Welcome when no stacks ────────────────────────────
@@ -2944,8 +3267,10 @@ function showStacksWelcome() {
       </div>
       <h2>No stacks yet</h2>
       <p>Create a stack to collect verses, keep passage groups together, and attach notes for study.</p>
+      <button id="empty-new-stack-btn" type="button">Create Stack</button>
     </div>
   `;
+  stackDetail.querySelector('#empty-new-stack-btn')?.addEventListener('click', () => newStackBtn.click());
 }
 
 // ── Create stack ──────────────────────────────────────
@@ -3042,7 +3367,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
 
 // ── Drag-to-reorder (single global listener set) ─────
 {
-  let dragCard = null, longPressTimer = null, startY = 0, offsetY = 0;
+  let dragCard = null, longPressTimer = null, startX = 0, startY = 0, offsetY = 0;
   let placeholder = null, scrollInterval = null, isDragging = false;
 
   stackDetail.addEventListener('touchstart', e => {
@@ -3051,6 +3376,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     if (!card || e.target.closest('input, button, textarea, a')) return;
     if (appMode !== 'stacks' || !activeStackId || stackCompareMode) return;
     const touch = e.touches[0];
+    startX = touch.clientX;
     startY = touch.clientY;
     longPressTimer = setTimeout(() => {
       isDragging = true;
@@ -3082,7 +3408,10 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
 
   stackDetail.addEventListener('touchmove', e => {
     if (!isDragging) {
-      if (longPressTimer && Math.abs(e.touches[0].clientY - startY) > 8) {
+      if (longPressTimer && (
+        Math.abs(e.touches[0].clientX - startX) > 8 ||
+        Math.abs(e.touches[0].clientY - startY) > 8
+      )) {
         clearTimeout(longPressTimer);
         longPressTimer = null;
       }
@@ -3192,12 +3521,20 @@ function addVerseToStack(stackId, verseData) {
   const stacks = loadStacks();
   const stack = stacks.find(s => s.id === stackId);
   if (!stack) return;
-  if (stack.verses.some(v => (v.passages ? v.passages[0].ref : v.ref) === verseData.ref)) {
+  const passages = verseData.passages || [{ ref: verseData.ref, text: verseData.text }];
+  const existingRefs = new Set(stack.verses.flatMap(card => (
+    card.passages || [{ ref: card.ref, text: card.text }]
+  )).map(passage => passage.ref));
+  if (passages.length && passages.every(passage => existingRefs.has(passage.ref))) {
     showToast(`Already in "${stack.title}"`);
     return;
   }
-  const passages = verseData.passages || [{ ref: verseData.ref, text: verseData.text }];
-  stack.verses.push({ passages, note: '', addedAt: Date.now() });
+  stack.verses.push({
+    passages,
+    note: '',
+    addedAt: Date.now(),
+    translation: TRANSLATIONS[verseData.translation] ? verseData.translation : activeTranslation
+  });
   touchStack(stack);
   saveStacks(stacks);
   renderStacksSummary();
@@ -3212,15 +3549,39 @@ function addVerseToStack(stackId, verseData) {
 }
 
 // ── Toast ─────────────────────────────────────────────
+let activeToast = null;
+let activeToastTimer = null;
+let activeToastRemoveTimer = null;
+
 function showToast(msg) {
-  const t = document.createElement('div');
-  t.className = 'toast';
-  t.textContent = msg;
-  document.body.appendChild(t);
-  requestAnimationFrame(() => t.classList.add('show'));
-  setTimeout(() => {
-    t.classList.remove('show');
-    setTimeout(() => t.remove(), 300);
+  clearTimeout(activeToastTimer);
+  clearTimeout(activeToastRemoveTimer);
+  if (!activeToast?.isConnected) {
+    activeToast = document.createElement('div');
+    activeToast.className = 'toast';
+    activeToast.setAttribute('role', 'status');
+    activeToast.setAttribute('aria-live', 'polite');
+    activeToast.setAttribute('aria-atomic', 'true');
+    document.body.appendChild(activeToast);
+  }
+
+  activeToast.textContent = msg;
+  let obstructionTop = window.innerHeight;
+  document.querySelectorAll('.bottom-nav, .selection-bar.open, .voice-bar.open').forEach(el => {
+    const rect = el.getBoundingClientRect();
+    if (rect.height > 0 && rect.bottom > 0) obstructionTop = Math.min(obstructionTop, rect.top);
+  });
+  activeToast.style.setProperty('--toast-bottom', `${Math.max(16, window.innerHeight - obstructionTop + 12)}px`);
+  requestAnimationFrame(() => activeToast?.classList.add('show'));
+  activeToastTimer = setTimeout(() => {
+    const toast = activeToast;
+    toast?.classList.remove('show');
+    activeToastRemoveTimer = setTimeout(() => {
+      if (activeToast !== toast) return;
+      toast?.remove();
+      activeToast = null;
+      activeToastRemoveTimer = null;
+    }, prefersReducedMotion() ? 0 : 300);
   }, 2200);
 }
 
@@ -3231,6 +3592,11 @@ function syncBibleActionRows() {
   });
   const selectedRows = Array.from(verseArea.querySelectorAll('.verse-row.selected'))
     .sort((a, b) => Number(a.dataset.vnum) - Number(b.dataset.vnum));
+  verseArea.querySelectorAll('.verse-row').forEach(row => {
+    const selected = row.classList.contains('selected');
+    row.setAttribute('aria-pressed', String(selected));
+    row.setAttribute('aria-label', `${selected ? 'Deselect' : 'Select'} ${activeBook?.name || 'verse'} ${activeChapter || ''}:${row.dataset.vnum}`);
+  });
   selectedRows.forEach((row, idx) => {
     const prev = selectedRows[idx - 1];
     const next = selectedRows[idx + 1];
@@ -3263,6 +3629,7 @@ function startVerseActionMode(verseData, rowEl) {
   if (!selectedVerses.some(v => v.ref === verseData.ref)) {
     selectedVerses.push(verseData);
     rowEl?.classList.add('selected');
+    rowEl?.setAttribute('aria-pressed', 'true');
   }
 
   activeActionVerseNum = verseData.verse;
@@ -3275,11 +3642,21 @@ function toggleVerseSelection(verseData, rowEl, btn) {
   if (idx === -1) {
     selectedVerses.push(verseData);
     rowEl?.classList.add('selected');
-    if (btn) btn.textContent = '✓';
+    rowEl?.setAttribute('aria-pressed', 'true');
+    if (btn) {
+      btn.textContent = '✓';
+      btn.setAttribute('aria-pressed', 'true');
+      btn.setAttribute('aria-label', 'Deselect verse');
+    }
   } else {
     selectedVerses.splice(idx, 1);
     rowEl?.classList.remove('selected');
-    if (btn) btn.textContent = '+';
+    rowEl?.setAttribute('aria-pressed', 'false');
+    if (btn) {
+      btn.textContent = '+';
+      btn.setAttribute('aria-pressed', 'false');
+      btn.setAttribute('aria-label', 'Select verse');
+    }
   }
   syncBibleActionRows();
   updateSelectionBar();
@@ -3298,6 +3675,8 @@ function updateSelectionBar() {
     bar = document.createElement('div');
     bar.id = 'selection-bar';
     bar.className = 'selection-bar';
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'Selected verse actions');
     document.body.appendChild(bar);
     requestAnimationFrame(() => bar.classList.add('open'));
   }
@@ -3310,13 +3689,13 @@ function updateSelectionBar() {
     bar.innerHTML = `
       <div class="sel-head">
         <span class="sel-count">${selectedVerses.length} verse${selectedVerses.length !== 1 ? 's' : ''} selected</span>
-        <button class="sel-done-btn" title="Done">Done</button>
+        <button class="sel-done-btn" type="button" title="Done">Done</button>
       </div>
       <div class="sel-actions${Voice.isSupported ? ' sel-actions-4' : ''}">
-        <button class="sel-secondary-btn sel-greek-btn" ${hasGreek ? '' : 'disabled'}>Greek</button>
-        <button class="sel-secondary-btn sel-compare-btn" ${activeVerse ? '' : 'disabled'}>Compare</button>
-        ${Voice.isSupported ? '<button class="sel-secondary-btn sel-play-btn">Play</button>' : ''}
-        <button class="sel-add-btn">Add to Stack</button>
+        <button class="sel-secondary-btn sel-greek-btn" type="button" ${hasGreek ? '' : 'disabled'}>Greek</button>
+        <button class="sel-secondary-btn sel-compare-btn" type="button" ${activeVerse ? '' : 'disabled'}>Compare</button>
+        ${Voice.isSupported ? '<button class="sel-secondary-btn sel-play-btn" type="button">Play</button>' : ''}
+        <button class="sel-add-btn" type="button">Add to Stack</button>
       </div>
     `;
 
@@ -3355,8 +3734,8 @@ function updateSelectionBar() {
   bar.className = 'selection-bar open';
   bar.innerHTML = `
     <span class="sel-count">${selectedVerses.length} verse${selectedVerses.length !== 1 ? 's' : ''} selected</span>
-    <button class="sel-add-btn">Add to Stack</button>
-    <button class="sel-clear-btn" title="Clear selection">×</button>
+    <button class="sel-add-btn" type="button">Add to Stack</button>
+    <button class="sel-clear-btn" type="button" title="Clear selection" aria-label="Clear selection">×</button>
   `;
   bar.querySelector('.sel-add-btn').addEventListener('click', e => {
     e.stopPropagation();
@@ -3381,8 +3760,13 @@ function clearSelection() {
   verseActionMode = false;
   activeActionVerseNum = null;
   document.querySelectorAll('.verse-row.selected, .result-item.selected').forEach(el => el.classList.remove('selected'));
+  document.querySelectorAll('.verse-row[aria-pressed="true"]').forEach(el => el.setAttribute('aria-pressed', 'false'));
   document.querySelectorAll('.verse-row.action-active').forEach(el => el.classList.remove('action-active'));
-  document.querySelectorAll('.add-btn').forEach(btn => btn.textContent = '+');
+  document.querySelectorAll('.add-btn').forEach(btn => {
+    btn.textContent = '+';
+    btn.setAttribute('aria-pressed', 'false');
+    btn.setAttribute('aria-label', 'Select verse');
+  });
   dismissSelectionBar();
 }
 
@@ -3414,7 +3798,8 @@ function buildCombinedVerseData(verses) {
     chapter: sorted[0].chapter,
     verse: sorted[0].verse,
     text: sorted.map(v => v.text).join(' '),
-    passages: sorted.map(v => ({ ref: v.ref, text: v.text }))
+    passages: sorted.map(v => ({ ref: v.ref, text: v.text })),
+    translation: sorted[0].translation || activeTranslation
   };
 }
 
@@ -3554,37 +3939,76 @@ function openStackSwitcher() {
     return;
   }
 
-  closeStackPicker();
+  closeStackPicker({ restoreFocus: false });
   const stacks = loadStacks();
   if (!stacks.length) return;
+  const trigger = document.getElementById('stack-switcher-btn');
 
   const backdrop = document.createElement('div');
   backdrop.className = 'stack-switcher-backdrop';
   backdrop.dataset.role = 'stack-switcher';
+  backdrop.setAttribute('aria-hidden', 'true');
+  backdrop.returnFocusElement = trigger;
   backdrop.innerHTML = `
-    <div class="stack-picker stack-picker-list">
-      <div class="stack-picker-title">Your Stacks</div>
-      ${stacks.map(stack => `
-        <button class="stack-picker-item stack-picker-stack-item${stack.id === activeStackId ? ' active' : ''}" data-id="${escHtml(stack.id)}" type="button">
-          <span class="stack-picker-stack-copy">
-            <span class="stack-picker-stack-title">${escHtml(stack.title)}</span>
-            <span class="stack-picker-stack-meta">${countStackPassages(stack)} saved passage${countStackPassages(stack) !== 1 ? 's' : ''}</span>
-          </span>
-          ${stack.id === activeStackId ? '<span class="stack-picker-check" aria-hidden="true">✓</span>' : ''}
+    <section class="stack-picker stack-picker-list stack-switcher-picker" role="dialog" aria-modal="true" aria-labelledby="stack-switcher-title" tabindex="-1">
+      <div class="stack-picker-head">
+        <div class="stack-picker-head-copy">
+          <h2 class="stack-add-title" id="stack-switcher-title">Your stacks</h2>
+          <p class="stack-picker-subtitle">Switch collections or start a new one</p>
+        </div>
+        <button class="stack-picker-close" type="button" aria-label="Close stack switcher">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
         </button>
-      `).join('')}
-      <button class="stack-picker-new" type="button">+ New Stack</button>
-    </div>
+      </div>
+      <div class="stack-picker-scroll">
+        ${stacks.map(stack => `
+          <button class="stack-picker-item stack-picker-stack-item${stack.id === activeStackId ? ' active' : ''}" data-id="${escHtml(stack.id)}" type="button" aria-pressed="${stack.id === activeStackId}">
+            <span class="stack-picker-stack-copy">
+              <span class="stack-picker-stack-title">${escHtml(stack.title)}</span>
+              <span class="stack-picker-stack-meta">${countStackPassages(stack)} saved passage${countStackPassages(stack) !== 1 ? 's' : ''}</span>
+            </span>
+            ${stack.id === activeStackId ? '<span class="stack-picker-check" aria-hidden="true">✓</span>' : ''}
+          </button>
+        `).join('')}
+      </div>
+      <div class="stack-picker-footer">
+        <button class="stack-picker-new" type="button">
+          <span class="stack-picker-new-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20" fill="none"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <span class="stack-picker-new-copy">
+            <span class="stack-picker-new-title">Create a new stack</span>
+            <span class="stack-picker-new-meta">Start a fresh collection</span>
+          </span>
+        </button>
+      </div>
+    </section>
   `;
 
   document.body.appendChild(backdrop);
   activePicker = backdrop;
+  trigger?.setAttribute('aria-expanded', 'true');
 
   const picker = backdrop.querySelector('.stack-picker-list');
   picker?.addEventListener('click', e => e.stopPropagation());
   backdrop.addEventListener('click', closeStackPicker);
+  backdrop.querySelector('.stack-picker-close')?.addEventListener('click', e => {
+    e.stopPropagation();
+    closeStackPicker();
+  });
+  backdrop.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeStackPicker();
+  });
 
-  requestAnimationFrame(() => { backdrop.classList.add('open'); picker.scrollTop = 0; });
+  requestAnimationFrame(() => {
+    if (activePicker !== backdrop) return;
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    picker.focus({ preventScroll: true });
+  });
 
   backdrop.querySelectorAll('.stack-picker-stack-item').forEach(item => {
     item.addEventListener('click', e => {
@@ -3615,8 +4039,16 @@ function closeStackPicker({ restoreFocus = true } = {}) {
   activePicker = null;
 
   if (picker.dataset.role === 'stack-switcher') {
+    document.getElementById('stack-switcher-btn')?.setAttribute('aria-expanded', 'false');
+    const returnFocusElement = picker.returnFocusElement;
     picker.classList.remove('open');
-    setTimeout(() => picker.remove(), 220);
+    picker.setAttribute('aria-hidden', 'true');
+    setTimeout(() => {
+      picker.remove();
+      if (restoreFocus && returnFocusElement?.isConnected) {
+        returnFocusElement.focus({ preventScroll: true });
+      }
+    }, prefersReducedMotion() ? 0 : 220);
     return;
   }
 
@@ -3629,7 +4061,7 @@ function closeStackPicker({ restoreFocus = true } = {}) {
       if (restoreFocus && returnFocusElement?.isConnected) {
         returnFocusElement.focus({ preventScroll: true });
       }
-    }, 220);
+    }, prefersReducedMotion() ? 0 : 220);
     return;
   }
 
@@ -3689,6 +4121,7 @@ function closeSettings() {
   closeSheet(settingsSheetBackdrop);
   settingsPanel.setAttribute('aria-hidden', 'true');
   settingsBtn.classList.remove('active');
+  settingsBtn.setAttribute('aria-expanded', 'false');
 }
 
 // ── Load saved settings ───────────────────────────────
@@ -3734,11 +4167,13 @@ function buildFontList(currentFont) {
   spFontCurrent.textContent = currentFont;
   spFontList.innerHTML = '';
   FONTS.forEach(f => {
-    const div = document.createElement('div');
-    div.className = 'sp-font-item' + (f.name === currentFont ? ' active' : '');
-    div.style.fontFamily = f.stack;
-    div.innerHTML = `<span>${escHtml(f.name)}</span><span class="sp-check">✓</span>`;
-    div.addEventListener('click', () => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'sp-font-item' + (f.name === currentFont ? ' active' : '');
+    button.style.fontFamily = f.stack;
+    button.setAttribute('aria-pressed', String(f.name === currentFont));
+    button.innerHTML = `<span>${escHtml(f.name)}</span><span class="sp-check" aria-hidden="true">✓</span>`;
+    button.addEventListener('click', () => {
       const s = loadSettings();
       s.font = f.name;
       saveSettings(s);
@@ -3746,7 +4181,7 @@ function buildFontList(currentFont) {
       syncPanelUI(s);
       setFontListOpen(false);
     });
-    spFontList.appendChild(div);
+    spFontList.appendChild(button);
   });
 }
 
@@ -3789,23 +4224,31 @@ settingsBtn.addEventListener('click', e => {
     setFontListOpen(false);
     settingsPanel.setAttribute('aria-hidden', 'false');
     settingsBtn.classList.add('active');
+    settingsBtn.setAttribute('aria-expanded', 'true');
     openSheet(settingsSheetBackdrop);
+    setTimeout(() => settingsPanel.focus({ preventScroll: true }), prefersReducedMotion() ? 0 : 60);
   }
 });
 
 function syncPanelUI(s) {
   const settings = getEffectiveSettings(s);
   document.querySelectorAll('.sp-theme-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.theme === settings.theme);
+    const active = btn.dataset.theme === settings.theme;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
   });
   document.querySelectorAll('.sp-spacing-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.spacing === settings.spacing);
+    const active = btn.dataset.spacing === settings.spacing;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
   });
   spFontCurrent.textContent = settings.font;
   spSizeDownBtn.disabled = getReaderSizeValue(settings) <= READER_SIZE_MIN + 0.001;
   spSizeUpBtn.disabled = getReaderSizeValue(settings) >= READER_SIZE_MAX - 0.001;
   spFontList.querySelectorAll('.sp-font-item').forEach(item => {
-    item.classList.toggle('active', item.firstElementChild?.textContent === settings.font);
+    const active = item.firstElementChild?.textContent === settings.font;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-pressed', String(active));
   });
 }
 

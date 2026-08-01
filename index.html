@@ -2,10 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Scripture Search — KJV Bible</title>
   <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <meta name="theme-color" content="#e74252" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Scripture" />
@@ -13,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bitter:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Inter:wght@300;400;500;600;700&family=Josefin+Sans:wght@300;400;600&family=Lato:ital,wght@0,400;0,700;1,400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Noto+Serif:ital,wght@0,400;0,700;1,400&family=Nunito:wght@400;500;600&family=Open+Sans:ital,wght@0,400;0,600;1,400&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Raleway:wght@400;500;600&family=Roboto:ital,wght@0,400;0,500;1,400&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=Spectral:ital,wght@0,400;0,500;1,400&family=Vollkorn:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=108" />
+  <link rel="stylesheet" href="style.css?v=109" />
 </head>
 <body>
 
@@ -21,7 +23,7 @@
     <main id="bible-pane" class="pane is-active" aria-hidden="false">
       <header class="top-bar">
         <div class="top-bar-main">
-          <button id="book-picker-btn" class="book-chip" type="button" title="Choose book">
+          <button id="book-picker-btn" class="book-chip" type="button" title="Choose book" aria-label="Choose book and chapter" aria-expanded="false" aria-controls="book-sheet">
             <span class="book-chip-main">
               <span id="book-chip-title" class="book-chip-title">Choose Book</span>
               <span id="book-chip-sub" class="book-chip-sub">Old Testament</span>
@@ -30,22 +32,22 @@
               <path d="m5 7.5 5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
-          <button id="translation-label" class="top-translation" type="button">KJV</button>
+          <button id="translation-label" class="top-translation" type="button" aria-label="Choose Bible translation" aria-expanded="false">KJV</button>
         </div>
         <div class="top-bar-actions">
-          <button id="account-btn" class="icon-btn" type="button" title="Account">
+          <button id="account-btn" class="icon-btn" type="button" title="Account" aria-label="Account and sync" aria-expanded="false" aria-controls="auth-backdrop">
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <circle cx="10" cy="6.3" r="3.1" stroke="currentColor" stroke-width="1.6"/>
               <path d="M4.8 16.2c.7-2.6 2.8-4.2 5.2-4.2s4.5 1.6 5.2 4.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
             </svg>
           </button>
-          <button id="search-open" class="icon-btn" type="button" title="Search Bible">
+          <button id="search-open" class="icon-btn" type="button" title="Search Bible" aria-label="Search Bible" aria-expanded="false" aria-controls="search-sheet">
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.7"/>
               <path d="m14 14 4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
             </svg>
           </button>
-          <button id="settings-btn" class="icon-btn settings-btn" type="button" title="Reader settings">Aa</button>
+          <button id="settings-btn" class="icon-btn settings-btn" type="button" title="Reader settings" aria-label="Reader settings" aria-expanded="false" aria-controls="settings-panel">Aa</button>
         </div>
 
       </header>
@@ -69,7 +71,7 @@
           <div class="stacks-top-meta-actions">
             <button id="import-stacks-btn" class="secondary-pill-btn stacks-utility-btn" type="button">Import</button>
             <button id="export-stacks-btn" class="secondary-pill-btn stacks-utility-btn" type="button">Export</button>
-            <button id="auth-open-btn" class="secondary-pill-btn auth-open-btn" type="button">Local Only</button>
+            <button id="auth-open-btn" class="secondary-pill-btn auth-open-btn" type="button" aria-expanded="false" aria-controls="auth-backdrop">Local Only</button>
           </div>
           <button id="new-stack-btn" class="primary-pill-btn stacks-create-btn" type="button">
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -119,46 +121,46 @@
     </nav>
   </div>
 
-  <div id="book-sheet-backdrop" class="sheet-backdrop hidden">
-    <div id="book-sheet" class="sheet book-sheet">
+  <div id="book-sheet-backdrop" class="sheet-backdrop hidden" aria-hidden="true">
+    <div id="book-sheet" class="sheet book-sheet" role="dialog" aria-modal="true" aria-labelledby="book-sheet-title" tabindex="-1">
       <div id="book-sheet-drag-zone" class="book-sheet-drag-zone">
         <div class="sheet-handle"></div>
         <div class="book-sheet-header">
         <button id="book-sheet-close" class="sheet-text-btn" type="button">Cancel</button>
-        <div class="sheet-title">Books</div>
+        <div class="sheet-title" id="book-sheet-title">Books</div>
         </div>
       </div>
       <div id="book-list" class="book-list"></div>
       <div class="book-sheet-footer">
         <div class="segmented book-order-seg">
-          <button id="tab-ot" class="seg active" type="button">Traditional</button>
-          <button id="tab-nt" class="seg" type="button">Alphabetical</button>
+          <button id="tab-ot" class="seg active" type="button" aria-pressed="true">Traditional</button>
+          <button id="tab-nt" class="seg" type="button" aria-pressed="false">Alphabetical</button>
         </div>
       </div>
     </div>
   </div>
 
-  <div id="search-sheet-backdrop" class="sheet-backdrop hidden">
-    <div class="sheet search-sheet">
+  <div id="search-sheet-backdrop" class="sheet-backdrop hidden" aria-hidden="true">
+    <div id="search-sheet" class="sheet search-sheet" role="dialog" aria-modal="true" aria-label="Search Bible" tabindex="-1">
       <div class="search-sheet-header">
         <div class="search-pill">
           <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/>
             <path d="m14.5 14.5 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
-          <input id="search-input" type="text" placeholder="Search words or enter a passage" autocomplete="off" />
+          <input id="search-input" type="search" placeholder="Search words or enter a passage" autocomplete="off" enterkeyhint="search" aria-label="Search words or enter a Bible passage" />
         </div>
         <button id="search-btn" class="search-submit" type="button">Search</button>
         <button id="search-close" class="search-cancel" type="button">Close</button>
       </div>
-      <div id="search-results" class="search-results">
+      <div id="search-results" class="search-results" aria-live="polite">
         <div class="search-empty">Search within the selected translation or jump to a passage reference.</div>
       </div>
     </div>
   </div>
 
-  <div id="settings-sheet-backdrop" class="sheet-backdrop hidden settings-sheet-backdrop">
-    <div id="settings-panel" class="sheet settings-panel">
+  <div id="settings-sheet-backdrop" class="sheet-backdrop hidden settings-sheet-backdrop" aria-hidden="true">
+    <div id="settings-panel" class="sheet settings-panel" role="dialog" aria-modal="true" aria-label="Reader settings" tabindex="-1">
       <div class="sp-handle" aria-hidden="true"></div>
       <div class="sp-toolbar">
         <button id="sp-size-down" class="sp-toolbar-btn sp-size-step" type="button" aria-label="Decrease font size">
@@ -199,9 +201,9 @@
       <div class="sp-section sp-section-soft">
         <div class="sp-label">Spacing</div>
         <div class="sp-row sp-row-spaced">
-          <button class="sp-spacing-btn" data-spacing="1.6">Compact</button>
-          <button class="sp-spacing-btn active" data-spacing="2.1">Normal</button>
-          <button class="sp-spacing-btn" data-spacing="2.7">Relaxed</button>
+          <button class="sp-spacing-btn" data-spacing="1.6" type="button" aria-pressed="false">Compact</button>
+          <button class="sp-spacing-btn active" data-spacing="2.1" type="button" aria-pressed="true">Normal</button>
+          <button class="sp-spacing-btn" data-spacing="2.7" type="button" aria-pressed="false">Relaxed</button>
         </div>
       </div>
     </div>
@@ -211,38 +213,38 @@
   <div id="greek-page" class="greek-page hidden"></div>
 
   <!-- Compare translations modal -->
-  <div id="compare-backdrop" class="compare-backdrop hidden">
-    <div id="compare-sheet" class="compare-sheet">
+  <div id="compare-backdrop" class="compare-backdrop hidden" aria-hidden="true">
+    <div id="compare-sheet" class="compare-sheet" role="dialog" aria-modal="true" aria-labelledby="compare-ref" tabindex="-1">
       <div class="compare-header">
         <span id="compare-ref" class="compare-ref"></span>
-        <button id="compare-close" class="compare-close">✕</button>
+        <button id="compare-close" class="compare-close" type="button" aria-label="Close translation comparison">✕</button>
       </div>
       <div id="compare-body" class="compare-body"></div>
     </div>
   </div>
 
   <!-- Custom modal -->
-  <div id="modal-backdrop" class="modal-backdrop hidden">
-    <div class="modal">
+  <div id="modal-backdrop" class="modal-backdrop hidden" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
       <div class="modal-title" id="modal-title"></div>
-      <input class="modal-input" id="modal-input" type="text" autocomplete="off" />
+      <input class="modal-input" id="modal-input" type="text" autocomplete="off" maxlength="60" aria-label="Stack name" />
       <div class="modal-btns">
-        <button class="modal-cancel" id="modal-cancel">Cancel</button>
-        <button class="modal-confirm" id="modal-confirm">OK</button>
+        <button class="modal-cancel" id="modal-cancel" type="button">Cancel</button>
+        <button class="modal-confirm" id="modal-confirm" type="button">OK</button>
       </div>
     </div>
   </div>
 
-  <div id="auth-backdrop" class="modal-backdrop hidden">
-    <div class="modal auth-modal">
-      <div class="modal-title">Account</div>
+  <div id="auth-backdrop" class="modal-backdrop hidden" aria-hidden="true">
+    <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" tabindex="-1">
+      <div class="modal-title" id="auth-title">Account</div>
       <div id="auth-copy" class="auth-copy">Sign in if you already have an account, or create one here to sync your stacks across devices.</div>
-      <input class="modal-input" id="auth-email" type="email" placeholder="Email" autocomplete="email" />
-      <input class="modal-input" id="auth-password" type="password" placeholder="Password" autocomplete="current-password" />
+      <input class="modal-input" id="auth-email" type="email" placeholder="Email" autocomplete="email" enterkeyhint="next" aria-label="Email address" />
+      <input class="modal-input" id="auth-password" type="password" placeholder="Password" autocomplete="current-password" enterkeyhint="go" aria-label="Password" />
       <div id="auth-feedback" class="auth-feedback hidden"></div>
       <div class="auth-btn-row">
-        <button class="modal-confirm" id="auth-sign-in">Sign In</button>
-        <button class="modal-cancel" id="auth-sign-up">Create Account</button>
+        <button class="modal-confirm" id="auth-sign-in" type="button">Sign In</button>
+        <button class="modal-cancel" id="auth-sign-up" type="button">Create Account</button>
       </div>
       <button class="auth-sign-out hidden" id="auth-sign-out" type="button">Sign Out</button>
       <div class="modal-btns auth-close-row">
@@ -251,7 +253,7 @@
     </div>
   </div>
 
-  <input id="import-stacks-file" type="file" accept="application/json,.json" class="hidden" />
+  <input id="import-stacks-file" type="file" accept="application/json,.json" class="hidden" aria-label="Import stacks file" />
 
   <script src="config.js"></script>
   <script>
@@ -259,7 +261,7 @@
       navigator.serviceWorker.register('sw.js');
     }
   </script>
-  <script type="module" src="app.js?v=106"></script>
+  <script type="module" src="app.js?v=107"></script>
 
 </body>
 </html>
