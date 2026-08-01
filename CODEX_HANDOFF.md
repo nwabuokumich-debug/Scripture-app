@@ -1,16 +1,19 @@
 # Scripture App — Handoff Document
 
-_Last updated: 2026-07-31_
+_Last updated: 2026-08-01_
 
 ---
 
 ## Current Status (read this first)
 
-- Repo branch: `main`. Last commit `f59a827` (2026-07-31), pushed and verified live on GitHub Pages.
+- Repo branch: `main`. Last commit `0102579` (2026-07-31), pushed and live on GitHub Pages.
 - **Voice quality is solved.** Pre-rendered OpenAI TTS (voice `marin`) replaced the mechanical system voice. User confirmed on device: "sounds perfect." See [Voice Quality — SOLVED](#voice-quality--solved-2026-07-31).
-- The June player redesign that had sat uncommitted for ~6 weeks shipped in the same commit.
+- **Background playback is solved.** A passage now plays as one stitched MP3 stream, so audio no longer stops at the first verse when the phone sleeps. See [Background playback](#background-playback--the-continuous-stream-2026-07-31).
+- The Voice Mode player was rebuilt as a light bottom sheet and device-tested the same day. The ~6 weeks of unpushed work is gone — everything is committed and pushed.
 
 **Complete and working.** Any verse plays in marin. Storage bucket, Edge Function, and secret are all live and verified end to end.
+
+**One action item before trusting "Load again":** the `tts` Edge Function gained a `force` flag in `0102579`'s series (commit `270fb5e`) but the deployed copy on Supabase may predate it — it is deployed by pasting source into the dashboard, not by `git push`. Redeploy `supabase/functions/tts/index.ts` if a re-render is ever needed. Without it, "Load again" still repairs local/SW cache corruption but cannot overwrite a bad stored render.
 
 Untracked scratch files (not part of any feature): `__voice-preview.html` (standalone harness for eyeballing the voice bar without booting the app), `tmp-diligence-search.mjs` (one-off Supabase scan for diligence/sloth/idleness verses).
 
@@ -44,8 +47,21 @@ The largest technical build. In-browser Transformers.js (`all-MiniLM-L6-v2`) emb
 ### Phase 8 — Voice Mode (2026-06-04 → 06-17)
 Four commits building the TTS subsystem and player. See below.
 
-### Phase 9 — Real voices (2026-07-31)
+### Phase 9 — Real voices (2026-07-31, morning)
 After a six-week gap, replaced synthesis-on-device with pre-rendered OpenAI TTS. Commits `37e8d53` (provider + renderer) and `f59a827` (Edge Function auth). Storage bucket and `tts` function deployed and verified the same day.
+
+### Phase 10 — Player redesign & background playback (2026-07-31, afternoon)
+Seven commits in one session, all device-tested by the user as they landed:
+
+| Commit | What |
+|---|---|
+| `f1ac3b2` | Voice Mode player rebuilt as a light bottom sheet — collapsed pill ↔ expanded sheet, SVG icons, theme tokens, scrubber, sleep timer |
+| `270fb5e` | "Load again" button; `_misses` keyed per translation; active translation shown in the player |
+| `82e0b51` | Add-to-stack picker bounded and scrollable instead of running off the top of the screen |
+| `d38d45e` | Media Session — lock-screen/headphone controls, metadata |
+| `ee57476` | **Passage played as one continuous stitched MP3 stream** — the real fix for playback dying on screen lock |
+| `b97a170` | Repeat regression from the stream change; native `el.loop` where the loaded stream is exactly what should repeat |
+| `0102579` | Repeat delay baked into the audio as real MP3 silence, so repeat-with-a-pause also survives a locked screen |
 
 ---
 
@@ -67,11 +83,17 @@ Each provider wraps the next as its fallback, so the chain degrades left to righ
 The provider interface is the swap seam:
 
 ```
-isSupported() · getVoices() · speakChunk(text,{voiceId,rate}) -> {promise,cancel}
-pause() · resume() · cancel() · prefetch?() · onVoiceSelected?()
+required   isSupported() · getVoices() · pause() · resume() · cancel()
+           speakChunk(text, opts) -> { promise, cancel }
+optional   prefetch() · onVoiceSelected() · unlock() · endSession()
+           prepareSequence(items, opts) · applyRepeat(opts) -> bool
+           getProgress() -> {current,duration}|null · seekTo() · seekBy()
+           reload(ref) · needsHeartbeat (false = skip the keep-alive)
 ```
 
-Anything implementing that shape drops in **without touching the UI**. `VoiceEngine` (playlist, repeat modes, delay, state machine) and `VoicePlayer` (the floating `#voice-bar`) are provider-agnostic.
+`speakChunk` opts: `voiceId · rate · item · index · restart · repeatMode · repeatDelayMs · count · onStatus`.
+
+Every optional member is called with `?.` and guarded — Web Speech and Kokoro implement none of them and still work. Anything implementing the required shape drops in **without touching the UI**. `VoiceEngine` (playlist, repeat modes, delay, state machine) and `VoicePlayer` (the `#voice-bar` sheet) stay provider-agnostic; when a provider can't report position, the player hides the scrubber rather than special-casing the provider.
 
 Engine hardening already done: session token invalidates stale async callbacks; error-streak guard prevents tight loops; pause/resume heartbeat keeps long utterances alive past Chrome/iOS ~15s cutoff; handles iOS flaky-pause.
 
@@ -87,14 +109,15 @@ Uses the OS `speechSynthesis`. Auto-picks the best installed English voice via `
 
 **Never produced audible output for the user.** Earlier test: selected `Kokoro Heart` on laptop, waited ~10 minutes on "Generating Kokoro audio…", heard nothing. Multiple rounds of fixes (worker thread, timeouts, status text, background warming, per-chunk fallback) did not resolve it.
 
-It falls back to Web Speech silently in several places — `voice.js:274-290` (model not ready), `voice.js:317` (generation failed), 60s generation timeout. **Net effect: the user believes they are using Kokoro but hears Web Speech.**
+It falls back to Web Speech silently in several places inside `KokoroProvider.speakChunk` (`voice.js:272` onward) — model not ready, generation failed, 60s generation timeout. **Net effect: the user believes they are using Kokoro but hears Web Speech.**
 
 Practical constraint: ~80MB model download running in WASM inside an iOS PWA. Do not keep debugging this unless explicitly asked.
 
-### Known limitations (platform, not bugs)
-- iOS pauses TTS/audio when the screen locks or the tab backgrounds.
+### Known limitations
 - Rate/voice changes apply to the **next** utterance, not the in-flight one.
 - Repeat is verse/passage looping until Stop (no fixed-count repeat).
+- Screen-lock playback works on the stitched-stream path only. The Web Speech and Kokoro fallbacks still stop when iOS backgrounds the page — that one *is* a platform limit.
+- One case still needs JS while backgrounded: **verse repeat inside a multi-verse passage**, because looping one verse of a longer stream has no native equivalent. Verse repeat on a single-verse playlist, and passage repeat on anything, both loop natively.
 
 ---
 
@@ -137,15 +160,56 @@ Static GitHub Pages **cannot hold an API key**, so on-demand rendering needs a s
 ```
 
 - Files are keyed by the verse `ref` the player already carries (`"Psalms 23:1"` → `Psalms-23-1.mp3`). `slugForRef()` is duplicated in three places — `voice.js`, `render-audio.mjs`, and the Edge Function — and **must stay in sync**.
-- `VoiceEngine` now passes `item` into `speakChunk`/`prefetch`. Older providers ignore it.
-- Next verse is prefetched during the current one, so a first-time chapter doesn't stall between verses.
-- One reused `<audio>` element: iOS unlocks playback per-element on user gesture, so reusing it is what lets verse 2 onward play without another tap.
+- `VoiceEngine` passes `item` into `speakChunk`/`prefetch`. Older providers ignore it.
+- One reused `<audio>` element for the whole session: iOS unlocks playback per-element on user gesture, so reusing it is what lets verse 2 onward play without another tap.
+- `_misses` (verses known unrenderable this session) is keyed `${translation}|${ref}`. Keyed on ref alone, one failed render poisoned that verse in every other translation for the rest of the session.
+- Per-verse prefetch still exists for the single-file path, but does nothing in sequence mode — everything is already in one blob by then.
+
+### Background playback — the continuous stream (2026-07-31)
+
+**The problem.** One MP3 per verse meant JavaScript had to run at every verse boundary to start the next file. iOS throttles JS in a backgrounded page, so playback stopped after the first verse whenever the phone slept. A Media Session (`d38d45e`) gave lock-screen controls and helped, but could not fix this — the cause was architectural.
+
+**The fix.** `prepareSequence()` fetches the whole passage, measures each verse, and concatenates the blobs into **one MP3 played by one element**. Nothing needs JS between verses, so throttling can't stop it.
+
+Why this is safe: MP3 frames join end-to-end, and these renders are constant-bitrate 128 kbps / 24 kHz mono. Verified — six Psalm 23 files joined measure 43.824 s, the exact sum of their parts — so seeking by measured offsets is accurate.
+
+- Verses resolve **6 at a time** (`SEQ_CONCURRENCY`), so a fresh chapter prepares in roughly one render, not thirty. Status line reports `Preparing chapter… n/N`.
+- If **any** verse fails to resolve or measure, the whole sequence is abandoned and playback falls back to per-verse. A single missing verse would silently shift every later offset — better to lose the background-safety than play the wrong audio.
+- `speakChunk` resolves against the shared timeline. If the page was frozen while the stream ran on, already-passed verses resolve immediately and the engine fast-forwards its index to where the audio actually is, without interrupting playback.
+- `cancel()` deliberately **keeps** the stitched passage — prev/next route through it, and rebuilding a chapter per skip would be pointless. `endSession()` does the real teardown when playback ends or the user stops.
+- Playback is claimed on the initiating click via a silent-WAV `unlock()`. The real `play()` now happens after fetching and stitching a whole chapter, far too late for iOS to accept it as gesture-initiated.
+- The scrubber spans the whole passage rather than the current verse.
+
+**Repeat.** `_nativeLoop()` sets `el.loop` where the loaded stream is exactly what should repeat — passage repeat on anything, verse repeat on a single-verse playlist. That needs no JS at all, so it keeps going with the screen locked.
+
+**The repeat delay is real silence, not a timer.** `el.loop` restarts instantly and gives no way to insert a gap, so a delay would otherwise force the JS path that iOS suspends. `silenceBlob()` appends MPEG-2 Layer III frames matching the TTS renders exactly (384 bytes, 24 ms each at 24 kHz/128 kbps mono; a valid header over a zero payload decodes to silence). Verified against the system decoder: 2000 ms produces 1.992 s, and a verse plus that gap measures 6.000 s against 4.008 + 1.992.
+
+Consequence worth knowing: **changing the delay mid-playback rebuilds the stream and restarts the verse**, because the gap is part of the audio. `applyRepeat()` returns `true` to tell the engine to restart.
+
+**Regression to remember** (`b97a170`): repeat replays the same index, and the stream provider first treated that as a natural advance — playback was already sitting at the end of that verse, so it resolved immediately instead of seeking back. Hence the `restart` flag: a repeat, skip, or fresh play always seeks to `part.start`; only a natural step onto the *following* verse is allowed to resolve early to catch up with a stream that ran on while throttled.
+
+### The player UI (`VoicePlayer`, owns only `#voice-bar`)
+
+Rebuilt in `f1ac3b2` as a light bottom sheet matching the reference design.
+
+- **Collapsed** is a slim pill: play, reference, expand, dismiss. **Expanded** is a bottom sheet: grab handle, centred title with "N of M", scrubber, transport, settings card, action row.
+- Surfaces use the app's theme tokens instead of hardcoded dark, so the player follows light/dark. Emoji glyphs replaced with inline SVG (the `ICON` map).
+- **Scrubber** with elapsed/duration and ±10s seek, backed by `getProgress`/`seekTo`/`seekBy`. Hidden automatically when the active provider can't report position — Web Speech has no elapsed time.
+- **Sleep timer**: tap cycles 5/10/15/30/60 min (`TIMER_STEPS`), counts down in place, stops playback when it fires.
+- **Closing is reachable five ways**: grab handle, header ✕, Hide, swipe down, tap-outside. Stop reading and the compact ✕ end playback entirely; stopping force-collapses the sheet and clears any running timer.
+- **Active translation** is shown next to the verse count. Audio follows the app's translation, but many verses read identically across translations (BSB and KJV Psalm 23:1 are word-for-word), so there was otherwise no way to tell what was playing.
+- **"Load again"** (`_reloadCurrent` → `provider.reload`) for a verse that loads truncated, silent, or from a bad render. It purges every cached copy — in-memory blob, service-worker entry, and the browser HTTP cache (Storage marks audio immutable for a year, so the refetch must use `cache: 'reload'`) — drops the stitched stream, asks the Edge Function to re-synthesize with `force: true`, and replays from the top.
+- **Media Session** (`_bindMediaSession`/`_updateMediaSession`): metadata (ref as title, translation as artist) plus handlers for play/pause/stop/prev/next/seek. Gives lock-screen and headphone controls.
 
 ### The Edge Function (`supabase/functions/tts/index.ts`)
 
 Holds `OPENAI_API_KEY`. Takes verse text **from the database, never from the request** — it is publicly callable and spends money, so it must only ever be able to synthesize actual scripture. Rejects unparseable refs, unknown books, and text over 1200 chars.
 
-**Not yet rate-limited.** Worth adding if the URL ever spreads.
+Accepts `{ ref, translation, voice, force }`. Without `force` it short-circuits on an already-stored object (`cached: true`, no OpenAI spend); with it, it re-synthesizes and overwrites — that is what "Load again" needs to repair a bad stored render.
+
+**Not yet rate-limited.** Worth adding if the URL ever spreads. `force` makes that more pressing: it is the one path that can be made to spend money repeatedly on the same verse.
+
+⚠️ **Deployed by hand.** `git push` does not update it — see the action item at the top.
 
 ### Service worker change (fixes a real bug)
 
@@ -156,9 +220,11 @@ Rendered audio now lives in an **unversioned** `scripture-audio` cache, cache-fi
 | Piece | Status |
 |---|---|
 | `AudioFileProvider` | ✅ shipped and verified live |
+| Stitched continuous stream | ✅ shipped; survives screen lock |
+| Bottom-sheet player | ✅ shipped and device-tested |
 | `render-audio.mjs` | ✅ working, resumable, prints cost before spending |
 | Psalm 23 (KJV, marin) in repo | ✅ live, confirmed good on device |
-| `tts` Edge Function | ✅ deployed and verified |
+| `tts` Edge Function | ⚠️ deployed and verified, but the deployed copy may predate `force` |
 | `scripture-audio` Storage bucket | ✅ created, public |
 | `OPENAI_API_KEY` Edge secret | ✅ set |
 
@@ -195,10 +261,12 @@ Current values in the working tree:
 
 | Anchor | Location | Current |
 |---|---|---|
-| `style.css?v=N` | `index.html:16` | **104** |
-| `app.js?v=M` | `index.html:262` | **98** |
-| `voice.js?v=P` | `app.js:2` (import specifier) | **12** |
-| `CACHE = 'scripture-vK'` | `sw.js:1` | **108** |
+| `style.css?v=N` | `index.html:16` | **107** |
+| `app.js?v=M` | `index.html:262` | **105** |
+| `voice.js?v=P` | `app.js:2` (import specifier) | **18** |
+| `CACHE = 'scripture-vK'` | `sw.js:1` | **115** |
+
+All four are in sync as of `0102579`. Commit messages in this repo record the anchors they ship — copy that habit.
 
 **Why:** GitHub Pages serves assets with caching headers. Only a changed URL forces a refetch. The SW is network-first so the SW cache isn't the issue — the browser HTTP cache is.
 
@@ -262,8 +330,8 @@ idx_verses_translation     ON verses(translation)
 idx_verse_embeddings_hnsw  ON verse_embeddings USING hnsw (embedding vector_cosine_ops)
 ```
 
-### If adding audio storage
-A Supabase Storage bucket for rendered audio is the planned home for pre-rendered files. Not yet created.
+### Storage
+Bucket **`scripture-audio`** (public) holds rendered verse audio at `<translation>/<Book>-<ch>-<v>.mp3`. Written by the `tts` Edge Function and by `render-audio.mjs`; read directly by `AudioFileProvider`. Objects are served immutable for a year — which is why "Load again" has to fetch with `cache: 'reload'`.
 
 ---
 
@@ -272,15 +340,20 @@ A Supabase Storage bucket for rendered audio is the planned home for pre-rendere
 ```
 /
 ├── index.html              # App shell, all UI markup
-├── app.js                  # All frontend logic (137KB) — imports voice.js
-├── voice.js                # Voice Mode subsystem (1109 lines)
+├── app.js                  # All frontend logic (3770 lines) — imports voice.js
+├── voice.js                # Voice Mode subsystem (2003 lines)
 ├── kokoro-worker.js        # Kokoro worker — never produced audible output
-├── style.css               # All styles (78KB)
+├── style.css               # All styles (2879 lines)
 ├── config.js               # Supabase URL + anon key
-├── sw.js                   # Service worker (network-first)
+├── sw.js                   # Service worker (network-first; audio in its own unversioned cache)
 ├── server.js               # Local dev server, port 4173 (npm run start|dev)
 ├── manifest.json           # PWA manifest (relative start_url/scope)
 ├── icon.svg
+├── render-audio.mjs        # Batch chapter renderer: node render-audio.mjs --book "Psalms" --chapter 23
+│                           #   -> audio-out/; add --repo to write audio/ (what the app fetches)
+├── audio/kjv/              # Repo-committed audio; currently Psalm 23 only (6 files)
+├── audio-out/              # Local render output — GITIGNORED, never committed
+├── supabase/functions/tts/ # Edge Function; deployed by pasting into the dashboard
 ├── schema.sql
 ├── migration-add-translation.sql
 ├── migration-add-user-stack-state.sql
@@ -343,20 +416,24 @@ Imports `Voice`/`initVoice`. All Play UI feature-gated on `Voice.isSupported`. P
 1. **Client cache masks fixes** — if the phone disagrees with verified local behavior, stale `index.html` / SW cache is the first suspect.
 2. **⚠️ Supabase service key was committed to git history** — rotate at Supabase → Project Settings → API. Still outstanding.
 3. **Greek tables may not exist** — `nt_word_tags`, `strongs_lexicon` not in `schema.sql`.
-4. **Cache busting is manual** — 4 anchors, easy to miss one (currently `app.js?v=` is out of sync).
+4. **Cache busting is manual** — 4 anchors, easy to miss one. All in sync as of `0102579`.
 5. **Kokoro is dead weight** — 14 voices in the picker that silently fall back to Web Speech. Consider hiding them; they make the user think they're hearing Kokoro when they aren't.
-6. **6 weeks of unpushed work** — the player redesign has never been device-tested.
+6. **The `tts` Edge Function deploys by hand** — repo and deployment can drift silently, and currently may have (the `force` flag).
+7. **Verse repeat inside a multi-verse passage still needs JS**, so that one combination stops when the screen locks. Everything else loops natively.
+8. **A whole-chapter first play is front-loaded** — the stream can't start until every verse resolves. Cached chapters are instant; a never-rendered chapter shows `Preparing chapter… n/N` while ~30 verses render 6 at a time. Fine in practice, but it is a real wait where the old per-verse path started immediately.
 
 ---
 
 ## Tips
 
 1. **Read `app.js` top-to-bottom once** — all logic in one file, no framework.
-2. **Voice work goes in `voice.js`** — respect the provider seam; don't put provider logic in `VoiceEngine` or `VoicePlayer`.
-3. **Books sheet** — expandable per-book chapter grid; dismisses via Cancel, backdrop, or drag-down (midpoint snap).
-4. **Bible reader layout** — one `.scripture-card` per chapter. Do NOT reintroduce per-verse cards.
-5. **Scroll resume** — don't call `renderStackView(..., { resetScroll: true })` on resume.
-6. **Adding a translation** — add slug/name to `TRANSLATIONS` in `app.js`, write an import script, run it.
-7. **Local dev** — `npm run start` (port 4173, `PORT` env to change). Serves `Cache-Control: no-store`.
-8. **Semantic search is translation-aware** — RPC ranks across all embedded translations, joins to the active one.
-9. **Confirm before pushing** when a commit bundles unrelated features.
+2. **Voice work goes in `voice.js`** — respect the provider seam; don't put provider logic in `VoiceEngine` or `VoicePlayer`. New optional provider members must be called with `?.` and work when absent, because Web Speech and Kokoro implement none of them.
+3. **Test Voice Mode with the screen actually locked.** Anything that reintroduces a JS step between verses — a per-verse fetch, a timer, a callback that must fire to continue — silently undoes the whole stitched-stream design, and it only shows up on a sleeping phone.
+4. **Books sheet** — expandable per-book chapter grid; dismisses via Cancel, backdrop, or drag-down (midpoint snap).
+5. **Bible reader layout** — one `.scripture-card` per chapter. Do NOT reintroduce per-verse cards.
+6. **Scroll resume** — don't call `renderStackView(..., { resetScroll: true })` on resume.
+7. **Adding a translation** — add slug/name to `TRANSLATIONS` in `app.js`, write an import script, run it.
+8. **Local dev** — `npm run start` (port 4173, `PORT` env to change). Serves `Cache-Control: no-store`.
+9. **Semantic search is translation-aware** — RPC ranks across all embedded translations, joins to the active one.
+10. **Bottom-anchored popups need a `max-height`** — the stack picker grew off the top of the screen because it had none. Anything anchored by its bottom edge above the selection bar must bound itself against both safe-area insets and scroll internally.
+11. **Confirm before pushing** when a commit bundles unrelated features.
