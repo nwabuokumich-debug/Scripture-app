@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bitter:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Inter:wght@300;400;500;600;700&family=Josefin+Sans:wght@300;400;600&family=Lato:ital,wght@0,400;0,700;1,400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Noto+Serif:ital,wght@0,400;0,700;1,400&family=Nunito:wght@400;500;600&family=Open+Sans:ital,wght@0,400;0,600;1,400&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Raleway:wght@400;500;600&family=Roboto:ital,wght@0,400;0,500;1,400&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=Spectral:ital,wght@0,400;0,500;1,400&family=Vollkorn:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=109" />
+  <link rel="stylesheet" href="style.css?v=110" />
 </head>
 <body>
 
@@ -91,6 +91,27 @@
       </div>
     </main>
 
+    <main id="playlists-pane" class="pane" aria-hidden="true">
+      <header class="top-bar stacks-top-bar playlists-top-bar">
+        <h1 class="stacks-pane-title playlists-pane-title">Playlists</h1>
+        <div class="stacks-top-actions playlists-top-actions">
+          <button id="new-playlist-btn" class="primary-pill-btn playlist-create-btn" type="button">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <span>New Playlist</span>
+          </button>
+        </div>
+      </header>
+
+      <div id="playlists-content" class="content-area">
+        <div class="stacks-shell playlists-shell">
+          <section id="playlist-list" class="playlist-list" aria-label="Saved playlists"></section>
+          <section id="playlist-detail" class="playlist-detail"></section>
+        </div>
+      </div>
+    </main>
+
     <nav class="bottom-nav" aria-label="Primary">
       <button id="nav-bible" class="nav-item active" type="button" aria-current="page">
         <svg class="nav-ico nav-ico-outline" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -117,6 +138,16 @@
           <path d="M12 3.8 3.6 8.2a1 1 0 0 0 0 1.76L12 14.2l8.4-4.24a1 1 0 0 0 0-1.76L12 3.8Zm-7.35 9.74L12 17.4l7.35-3.86 1.11.56a1 1 0 0 1 0 1.8L12 20.2l-8.46-4.3a1 1 0 0 1 0-1.8l1.11-.56Z"/>
         </svg>
         <span class="nav-label">Stacks</span>
+      </button>
+      <button id="nav-playlists" class="nav-item" type="button">
+        <svg class="nav-ico nav-ico-outline" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 6h14M5 11h14M5 16h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="m15 14.5 4.5 2.75L15 20v-5.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+        <svg class="nav-ico nav-ico-filled" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M5 5.1a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h5.4a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Zm9.1-.35c0-.8.87-1.28 1.54-.87l4.35 2.66a1.02 1.02 0 0 1 0 1.74l-4.35 2.66a1.02 1.02 0 0 1-1.54-.87v-5.32Z"/>
+        </svg>
+        <span class="nav-label">Playlists</span>
       </button>
     </nav>
   </div>
@@ -157,6 +188,63 @@
         <div class="search-empty">Search within the selected translation or jump to a passage reference.</div>
       </div>
     </div>
+  </div>
+
+  <div id="playlist-add-backdrop" class="sheet-backdrop playlist-add-backdrop hidden" aria-hidden="true">
+    <section id="playlist-add-sheet" class="sheet playlist-add-sheet" role="dialog" aria-modal="true" aria-labelledby="playlist-add-title" aria-describedby="playlist-add-summary" tabindex="-1">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <header class="playlist-add-header">
+        <div>
+          <h2 id="playlist-add-title" class="sheet-title playlist-add-title">Add to playlist</h2>
+          <p id="playlist-add-summary" class="playlist-add-summary" aria-live="polite">No scripture cards selected</p>
+        </div>
+        <button id="playlist-add-close" class="stack-picker-close" type="button" aria-label="Close playlist picker">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="m5.5 5.5 9 9m0-9-9 9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+
+      <div class="playlist-add-body">
+        <fieldset class="playlist-add-fieldset">
+          <legend class="playlist-add-label">Add selected cards as</legend>
+          <div class="playlist-add-mode-grid">
+            <label class="playlist-add-mode-option is-selected">
+              <input id="playlist-add-mode-separate" type="radio" name="playlist-add-mode" value="separate" checked />
+              <span class="playlist-add-mode-copy">
+                <span class="playlist-add-mode-title">Separate items</span>
+                <span class="playlist-add-mode-note">Set a different repeat count for every card.</span>
+              </span>
+            </label>
+            <label class="playlist-add-mode-option">
+              <input id="playlist-add-mode-group" type="radio" name="playlist-add-mode" value="group" />
+              <span class="playlist-add-mode-copy">
+                <span class="playlist-add-mode-title">One group</span>
+                <span class="playlist-add-mode-note">Keep the cards together as one repeatable set.</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <div class="playlist-add-field">
+          <label class="playlist-add-label" for="playlist-destination-select">Destination</label>
+          <select id="playlist-destination-select" class="playlist-destination-select" aria-describedby="playlist-destination-help">
+            <option value="new">Create a new playlist</option>
+          </select>
+          <span id="playlist-destination-help" class="playlist-field-help">Choose a saved playlist or create a new one.</span>
+        </div>
+
+        <div id="playlist-new-name-field" class="playlist-add-field">
+          <label class="playlist-add-label" for="playlist-new-name">New playlist name</label>
+          <input id="playlist-new-name" class="playlist-new-name" type="text" maxlength="60" autocomplete="off" enterkeyhint="done" placeholder="e.g. Faith, Healing, Night listening…" />
+        </div>
+      </div>
+
+      <footer class="playlist-add-actions">
+        <button id="playlist-add-cancel" class="modal-cancel" type="button">Cancel</button>
+        <button id="playlist-add-confirm" class="modal-confirm" type="button" disabled>Add</button>
+      </footer>
+    </section>
   </div>
 
   <div id="settings-sheet-backdrop" class="sheet-backdrop hidden settings-sheet-backdrop" aria-hidden="true">
@@ -227,7 +315,7 @@
   <div id="modal-backdrop" class="modal-backdrop hidden" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
       <div class="modal-title" id="modal-title"></div>
-      <input class="modal-input" id="modal-input" type="text" autocomplete="off" maxlength="60" aria-label="Stack name" />
+      <input class="modal-input" id="modal-input" type="text" autocomplete="off" maxlength="60" aria-labelledby="modal-title" />
       <div class="modal-btns">
         <button class="modal-cancel" id="modal-cancel" type="button">Cancel</button>
         <button class="modal-confirm" id="modal-confirm" type="button">OK</button>
@@ -261,7 +349,7 @@
       navigator.serviceWorker.register('sw.js');
     }
   </script>
-  <script type="module" src="app.js?v=107"></script>
+  <script type="module" src="app.js?v=108"></script>
 
 </body>
 </html>

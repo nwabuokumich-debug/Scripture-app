@@ -10,10 +10,13 @@
 //
 // Public surface (imported by app.js):
 //   import { Voice, initVoice } from './voice.js?v=N';
-//   initVoice({ onItemStart, onStateChange });   // wire app-side highlight/scroll
+//   initVoice({ onItemStart, onItemEnd, onStateChange, onPlaybackEnd });
 //   Voice.isSupported
-//   Voice.playScripture(items, { startIndex })   // items: [{ ref, text, vnum? }]
+//   Voice.playScripture(items, { startIndex, sessionType, sessionLabel,
+//     repeatMode, repeatDelayMs, sessionMetadata })
+//   // items: [{ ref, text, translation?, vnum?, playlistMetadata? }]
 //   Voice.pauseScripture() / resumeScripture() / stopScripture()
+//   Voice.skipTo(index) / next() / prev()
 //   Voice.setVoice(id) / setPlaybackRate(r) / setRepeatMode(m) / setRepeatDelay(ms)
 //
 // app.js owns DOM knowledge of verse rows; this module owns only #voice-bar.
@@ -678,16 +681,45 @@ class VoiceEngine {
     this.settings = loadVoiceSettings();
     this.callbacks = {};
     this._delayTimer = null;
+    this._pendingDelay = null;
     this._heartbeat = null;
     this._pausedInDelay = false;
     this._endedWhilePaused = false;
     this._errorStreak = 0;
+    this.sessionType = 'scripture';
+    this.sessionLabel = '';
+    this.sessionRepeatMode = null;
+    this.sessionRepeatDelayMs = null;
+    this.sessionMetadata = {};
+    this.sessionOptions = {};
   }
 
   get isSupported() { return this.provider.isSupported(); }
+  get currentItem() { return this.state === 'idle' ? null : (this.playlist[this.index] || null); }
+  get currentIndex() { return this.state === 'idle' ? -1 : this.index; }
+  get itemCount() { return this.state === 'idle' ? 0 : this.playlist.length; }
+  get isPlaylistSession() { return this.sessionType === 'playlist'; }
+  get effectiveRepeatMode() { return this._repeatMode(); }
+  get effectiveRepeatDelayMs() { return this._repeatDelayMs(); }
   setCallbacks(cb) { this.callbacks = { ...this.callbacks, ...cb }; }
 
   _emitState() { try { this.callbacks.onStateChange?.(this.state, this); } catch {} }
+
+  _sessionSnapshot() {
+    return {
+      type: this.sessionType,
+      label: this.sessionLabel,
+      repeatMode: this._repeatMode(),
+      repeatDelayMs: this._repeatDelayMs(),
+      metadata: { ...this.sessionMetadata },
+      currentIndex: this.index,
+      itemCount: this.playlist.length,
+    };
+  }
+
+  _emitPlaybackEnd(reason, snapshot = this._sessionSnapshot()) {
+    try { this.callbacks.onPlaybackEnd?.(reason, this, snapshot); } catch {}
+  }
 
   // ── timers ──
   _startHeartbeat() {
@@ -707,7 +739,39 @@ class VoiceEngine {
   }
 
   // ── lifecycle ──
-  playScripture(items, { startIndex = 0 } = {}) {
+  _repeatMode() {
+    return this.sessionRepeatMode ?? this.settings.repeatMode;
+  }
+
+  _repeatDelayMs() {
+    return this.sessionRepeatDelayMs ?? this.settings.repeatDelayMs;
+  }
+
+  _usesSessionRepeatSettings() {
+    return this.state !== 'idle' && (
+      this.sessionType === 'playlist'
+      || this.sessionRepeatMode != null
+      || this.sessionRepeatDelayMs != null
+    );
+  }
+
+  _resetSession() {
+    this.sessionType = 'scripture';
+    this.sessionLabel = '';
+    this.sessionRepeatMode = null;
+    this.sessionRepeatDelayMs = null;
+    this.sessionMetadata = {};
+    this.sessionOptions = {};
+  }
+
+  playScripture(items, {
+    startIndex = 0,
+    sessionType = 'scripture',
+    sessionLabel = '',
+    repeatMode = null,
+    repeatDelayMs = null,
+    sessionMetadata = null,
+  } = {}) {
     if (!this.isSupported) return;
     const list = (items || []).filter(it => it && typeof it.text === 'string' && it.text.trim());
     if (!list.length) return;
@@ -716,6 +780,22 @@ class VoiceEngine {
     try { this.provider.unlock?.(); } catch {}
     this._hardStop();
     this._errorStreak = 0;
+    this.sessionType = sessionType === 'playlist' ? 'playlist' : 'scripture';
+    this.sessionLabel = String(sessionLabel || '');
+    this.sessionRepeatMode = ['none', 'verse', 'passage'].includes(repeatMode) ? repeatMode : null;
+    this.sessionRepeatDelayMs = Number.isFinite(repeatDelayMs)
+      ? Math.min(DELAY_MAX, Math.max(0, repeatDelayMs | 0))
+      : null;
+    this.sessionMetadata = sessionMetadata && typeof sessionMetadata === 'object'
+      ? { ...sessionMetadata }
+      : {};
+    this.sessionOptions = {
+      sessionType: this.sessionType,
+      sessionLabel: this.sessionLabel,
+      repeatMode: this.sessionRepeatMode,
+      repeatDelayMs: this.sessionRepeatDelayMs,
+      sessionMetadata: { ...this.sessionMetadata },
+    };
     this.playlist = list;
     this.index = Math.min(Math.max(0, startIndex), list.length - 1);
     this.state = 'playing';
@@ -723,12 +803,19 @@ class VoiceEngine {
     // resolves asynchronously; speakChunk waits on it internally, so playback
     // still starts from this synchronous call.
     if (this.provider.prepareSequence) {
+      const sessionToken = this.token;
       try {
         this.provider.prepareSequence(list, {
-          onStatus: label => { this.statusLabel = label || ''; this._emitState(); },
-          repeatMode: this.settings.repeatMode,
-          repeatDelayMs: this.settings.repeatDelayMs,
+          onStatus: label => {
+            if (sessionToken !== this.token) return;
+            this.statusLabel = label || '';
+            this._emitState();
+          },
+          repeatMode: this._repeatMode(),
+          repeatDelayMs: this._repeatDelayMs(),
+          rate: this.settings.rate,
           count: list.length,
+          sessionType: this.sessionType,
         });
       } catch {}
     }
@@ -757,9 +844,10 @@ class VoiceEngine {
       item,                                  // providers keyed by verse ref need this
       index: i,                              // position within a stitched passage
       restart,
-      repeatMode: this.settings.repeatMode,
-      repeatDelayMs: this.settings.repeatDelayMs,
+      repeatMode: this._repeatMode(),
+      repeatDelayMs: this._repeatDelayMs(),
       count: this.playlist.length,
+      sessionType: this.sessionType,
       onStatus: label => {
         if (myToken !== this.token) return;
         this.statusLabel = label || '';
@@ -782,10 +870,15 @@ class VoiceEngine {
         // Skip past an occasional error, but guard against a tight error
         // loop (e.g. broken synthesis while in Verse repeat).
         this._errorStreak++;
-        if (this._errorStreak > Math.max(4, this.playlist.length)) { this._finish(); return; }
+        if (this._errorStreak > Math.max(4, this.playlist.length)) {
+          try { this.callbacks.onItemEnd?.(item, i, this, { reason: 'error' }); } catch {}
+          this._finish('error');
+          return;
+        }
       } else {
         this._errorStreak = 0;
       }
+      try { this.callbacks.onItemEnd?.(item, i, this, { reason: errored ? 'error' : 'ended' }); } catch {}
       // iOS pause() is flaky: an utterance can finish during a "pause".
       // Remember that so resume() advances instead of hanging.
       if (this.state === 'paused') { this._endedWhilePaused = true; return; }
@@ -796,7 +889,7 @@ class VoiceEngine {
 
   _advanceAfter(i) {
     if (this.state !== 'playing') return;    // paused mid-utterance must not advance
-    const mode = this.settings.repeatMode;
+    const mode = this._repeatMode();
     const isLast = i >= this.playlist.length - 1;
 
     let nextIndex = null;
@@ -811,17 +904,20 @@ class VoiceEngine {
 
     if (nextIndex === null) { this._finish(); return; }
 
-    const delay = Math.max(0, this.settings.repeatDelayMs || 0);
+    const delay = Math.max(0, this._repeatDelayMs() || 0);
     // Anything other than stepping onto the next verse is a deliberate restart.
     const restart = nextIndex !== i + 1;
     const go = () => { if (this.state === 'playing') this._playIndex(nextIndex, { restart }); };
     if (delay > 0 && atRepeatBoundary) {
       const myToken = this.token;
+      this._pendingDelay = { token: myToken, nextIndex, restart };
       this._delayTimer = setTimeout(() => {
         this._delayTimer = null;
+        this._pendingDelay = null;
         if (myToken === this.token) go();
       }, delay);
     } else {
+      this._pendingDelay = null;
       go();
     }
   }
@@ -845,8 +941,14 @@ class VoiceEngine {
       this._endedWhilePaused = false;
       this._advanceAfter(this.index);   // current chunk already finished; move on
     } else if (this._pausedInDelay) {
+      const pending = this._pendingDelay;
       this._pausedInDelay = false;
-      this._playIndex(this.index, { restart: true });   // we were between repeats
+      this._pendingDelay = null;
+      if (pending?.token === this.token) {
+        this._playIndex(pending.nextIndex, { restart: pending.restart });
+      } else {
+        this._advanceAfter(this.index);
+      }
     } else {
       this.provider.resume();
       this._startHeartbeat();
@@ -856,7 +958,9 @@ class VoiceEngine {
   // Jump within the current playlist (prev/next), keeping it intact.
   skipTo(i) {
     if (!this.playlist.length) return;
-    const target = Math.min(Math.max(0, i), this.playlist.length - 1);
+    const requested = Number(i);
+    if (!Number.isFinite(requested)) return;
+    const target = Math.min(Math.max(0, Math.trunc(requested)), this.playlist.length - 1);
     this._hardStop();
     this._errorStreak = 0;
     this.state = 'playing';
@@ -864,15 +968,33 @@ class VoiceEngine {
     this._emitState();
     this._playIndex(target, { restart: true });
   }
-  next() { this.skipTo(this.index + 1); }
-  prev() { this.skipTo(this.index - 1); }
+  next() {
+    const atEnd = this.index >= this.playlist.length - 1;
+    if (atEnd) {
+      if (this._repeatMode() === 'passage') this.skipTo(0);
+      return;
+    }
+    this.skipTo(this.index + 1);
+  }
+  prev() {
+    const atStart = this.index <= 0;
+    if (atStart) {
+      if (this._repeatMode() === 'passage') this.skipTo(this.playlist.length - 1);
+      return;
+    }
+    this.skipTo(this.index - 1);
+  }
 
   stopScripture() {
+    const wasActive = this.state !== 'idle';
+    const session = this._sessionSnapshot();
     this._hardStop();
     try { this.provider.endSession?.(); } catch {}
     this.state = 'idle';
+    this._resetSession();
     buzz();
     this._emitState();
+    if (wasActive) this._emitPlaybackEnd('stopped', session);
   }
 
   // Invalidate all in-flight async work and silence the provider.
@@ -883,27 +1005,61 @@ class VoiceEngine {
     this._stopHeartbeat();
     this.statusLabel = '';
     this._pausedInDelay = false;
+    this._pendingDelay = null;
     this._endedWhilePaused = false;
     this.provider.cancel();
   }
 
-  _finish() {
+  _finish(reason = 'completed') {
+    const session = this._sessionSnapshot();
     this.token++;
     this._clearDelay();
     this._stopHeartbeat();
     this.statusLabel = '';
     this._pausedInDelay = false;
+    this._pendingDelay = null;
     this.state = 'idle';
     this.provider.cancel();
     try { this.provider.endSession?.(); } catch {}
+    this._resetSession();
     this._emitState();
+    this._emitPlaybackEnd(reason, session);
   }
 
   // ── settings (apply to subsequent utterances) ──
-  setPlaybackRate(rate) { this.settings.rate = clampRate(rate); saveVoiceSettings(this.settings); this._emitState(); }
+  setPlaybackRate(rate) {
+    this.settings.rate = clampRate(rate);
+    saveVoiceSettings(this.settings);
+    this._syncRepeat();
+    this._emitState();
+  }
   setVoice(voiceId)     { this.settings.voiceId = voiceId || ''; saveVoiceSettings(this.settings); try { this.provider.onVoiceSelected?.(this.settings.voiceId); } catch {} this._emitState(); }
-  setRepeatMode(mode)   { this.settings.repeatMode = mode; saveVoiceSettings(this.settings); this._syncRepeat(); this._emitState(); }
-  setRepeatDelay(ms)    { this.settings.repeatDelayMs = Math.min(DELAY_MAX, Math.max(0, ms | 0)); saveVoiceSettings(this.settings); this._syncRepeat(); this._emitState(); }
+  setRepeatMode(mode) {
+    if (!['none', 'verse', 'passage'].includes(mode)) return;
+    if (this._usesSessionRepeatSettings()) {
+      this.sessionRepeatMode = mode;
+      this.sessionOptions.repeatMode = mode;
+    } else {
+      this.settings.repeatMode = mode;
+      saveVoiceSettings(this.settings);
+    }
+    this._refreshPendingAdvance();
+    this._syncRepeat();
+    this._emitState();
+  }
+  setRepeatDelay(ms) {
+    const next = Math.min(DELAY_MAX, Math.max(0, ms | 0));
+    if (this._usesSessionRepeatSettings()) {
+      this.sessionRepeatDelayMs = next;
+      this.sessionOptions.repeatDelayMs = next;
+    } else {
+      this.settings.repeatDelayMs = next;
+      saveVoiceSettings(this.settings);
+    }
+    this._refreshPendingAdvance();
+    this._syncRepeat();
+    this._emitState();
+  }
 
   // Native looping is decided by the provider from these two settings, so it
   // has to be told when they change while something is already playing.
@@ -911,13 +1067,35 @@ class VoiceEngine {
     let rebuild = false;
     try {
       rebuild = this.provider.applyRepeat?.({
-        repeatMode: this.settings.repeatMode,
-        repeatDelayMs: this.settings.repeatDelayMs,
+        repeatMode: this._repeatMode(),
+        repeatDelayMs: this._repeatDelayMs(),
+        rate: this.settings.rate,
         count: this.playlist.length,
       }) === true;
     } catch {}
-    // The gap is baked into the stream, so changing it means a new stream.
-    if (rebuild && this.state === 'playing') this.playScripture(this.playlist, { startIndex: this.index });
+    // A provider may need a new stream after a setting change. If the current
+    // item has already ended and we are paused at its repeat boundary, leave
+    // that transition intact; replaying `this.index` would repeat the item an
+    // unintended extra time on resume.
+    if (rebuild && this.state !== 'idle') {
+      if (this.state === 'paused' && (this._pausedInDelay || this._endedWhilePaused)) return;
+      const wasPaused = this.state === 'paused';
+      this.playScripture(this.playlist, { ...this.sessionOptions, startIndex: this.index });
+      if (wasPaused) this.pauseScripture();
+    }
+  }
+
+  _refreshPendingAdvance() {
+    if (!this._pendingDelay && !this._pausedInDelay) return;
+    this._clearDelay();
+    this._pendingDelay = null;
+    if (this.state === 'paused') {
+      this._pausedInDelay = false;
+      this._endedWhilePaused = true;
+    } else if (this.state === 'playing') {
+      this._pausedInDelay = false;
+      this._advanceAfter(this.index);
+    }
   }
 }
 
@@ -1104,8 +1282,8 @@ class VoicePlayer {
 
     this._$('.voice-rate-down').addEventListener('click', () => eng.setPlaybackRate(eng.settings.rate - RATE_STEP));
     this._$('.voice-rate-up').addEventListener('click',   () => eng.setPlaybackRate(eng.settings.rate + RATE_STEP));
-    this._$('.voice-delay-down').addEventListener('click', () => eng.setRepeatDelay(eng.settings.repeatDelayMs - DELAY_STEP));
-    this._$('.voice-delay-up').addEventListener('click',   () => eng.setRepeatDelay(eng.settings.repeatDelayMs + DELAY_STEP));
+    this._$('.voice-delay-down').addEventListener('click', () => eng.setRepeatDelay(eng.effectiveRepeatDelayMs - DELAY_STEP));
+    this._$('.voice-delay-up').addEventListener('click',   () => eng.setRepeatDelay(eng.effectiveRepeatDelayMs + DELAY_STEP));
 
     this.el.querySelectorAll('.voice-repeat-btn').forEach(btn => {
       btn.addEventListener('click', () => eng.setRepeatMode(btn.dataset.mode));
@@ -1257,7 +1435,7 @@ class VoicePlayer {
     safe('seekforward',   () => this._seekBy(10));
   }
 
-  _updateMediaSession(ref, translation, state) {
+  _updateMediaSession(ref, translation, state, album = 'Scripture') {
     const ms = navigator.mediaSession;
     if (!ms) return;
     try {
@@ -1266,7 +1444,7 @@ class VoicePlayer {
         ms.metadata = new MediaMetadata({
           title: ref,
           artist: translation,
-          album: 'Scripture',
+          album,
           artwork: [{ src: './icon.svg', sizes: '512x512', type: 'image/svg+xml' }],
         });
       }
@@ -1287,18 +1465,27 @@ class VoicePlayer {
 
     const list = eng.playlist.slice();
     const at = eng.index;
+    const token = eng.token;
+    const sessionOptions = {
+      ...eng.sessionOptions,
+      sessionMetadata: { ...eng.sessionMetadata },
+    };
     try {
-      await this.engine.provider.reload?.(item.ref);
+      await this.engine.provider.reload?.(item.ref, item.translation);
     } catch {}
 
     btn.disabled = false;
     btn.textContent = 'Load again';
+    if (eng.token !== token || eng.state === 'idle' || eng.index !== at) return;
+    const shouldRemainPaused = eng.state === 'paused';
     // Restarting the playlist at the same index re-runs the whole resolve
     // path, which now has nothing cached to fall back on.
-    eng.playScripture(list, { startIndex: at });
+    eng.playScripture(list, { ...sessionOptions, startIndex: at });
+    if (shouldRemainPaused) eng.pauseScripture();
   }
 
-  _activeTranslation() {
+  _activeTranslation(item = null) {
+    if (item?.translation) return String(item.translation).toUpperCase();
     try { return (localStorage.getItem('active_translation') || 'kjv').toUpperCase(); }
     catch { return 'KJV'; }
   }
@@ -1349,17 +1536,53 @@ class VoicePlayer {
 
     const item = eng.playlist[eng.index];
     const refText = item ? item.ref : '';
-    // Always show which translation is being read. The audio follows the
-    // app's active translation, and several verses read identically across
-    // translations, so without this there is no way to tell them apart.
+    // Playlist items can carry their own translation and grouping metadata.
+    // The broad aliases keep the voice layer decoupled from the persistence
+    // shape while still giving the player useful set/repeat progress.
     const countText = eng.playlist.length > 1 ? `${eng.index + 1} of ${eng.playlist.length}` : '';
-    const trans = this._activeTranslation();
-    const subText = eng.statusLabel || [countText, trans].filter(Boolean).join(' · ');
+    const trans = this._activeTranslation(item);
+    const playlistMeta = item?.playlistMetadata || item?.playlistMeta || item?.playlist || {};
+    const firstFinite = (...values) => values.find(value =>
+      value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
+    );
+    const entryIndex = firstFinite(
+      playlistMeta.entryIndex,
+      item?.playlistEntryIndex,
+      item?.entryIndex,
+    );
+    const entryCount = firstFinite(
+      playlistMeta.entryCount,
+      item?.playlistEntryCount,
+      eng.sessionMetadata?.entryCount,
+    );
+    const repeatIndex = firstFinite(
+      playlistMeta.repeatIndex,
+      item?.repeatIteration,
+      item?.repeatIndex,
+    );
+    const repeatCount = firstFinite(
+      playlistMeta.repeatCount,
+      item?.repeatTotal,
+      item?.repeatCount,
+    );
+    const playlistProgress = eng.isPlaylistSession && entryIndex != null && entryCount > 0
+      ? `Set ${Number(entryIndex) + 1} of ${Number(entryCount)}`
+      : '';
+    const repeatProgress = eng.isPlaylistSession && repeatIndex != null && repeatCount > 1
+      ? `Repeat ${Number(repeatIndex) + 1} of ${Number(repeatCount)}`
+      : '';
+    const sessionText = eng.isPlaylistSession ? (eng.sessionLabel || 'Playlist') : '';
+    const positionText = eng.isPlaylistSession ? (playlistProgress || countText) : countText;
+    const subText = eng.statusLabel
+      || [sessionText, positionText, repeatProgress, trans].filter(Boolean).join(' · ');
 
     this._$('.voice-ref').textContent = refText;
     this._$('.voice-sub').textContent = subText;
     this._$('.voice-compact-ref').textContent = refText;
     this._$('.voice-compact-sub').textContent = subText;
+
+    this._$('.voice-prev').setAttribute('aria-label', eng.isPlaylistSession ? 'Previous playlist scripture' : 'Previous verse');
+    this._$('.voice-next').setAttribute('aria-label', eng.isPlaylistSession ? 'Next playlist scripture' : 'Next verse');
 
     const isPaused = eng.state === 'paused';
     [this._$('.voice-toggle'), this._$('.voice-compact-toggle')].forEach(btn => {
@@ -1368,15 +1591,18 @@ class VoicePlayer {
       btn.setAttribute('aria-label', isPaused ? 'Resume' : 'Pause');
     });
     this.el.classList.toggle('is-paused', isPaused);
-    this._updateMediaSession(refText, trans, !visible ? 'none' : (isPaused ? 'paused' : 'playing'));
+    const album = eng.isPlaylistSession ? (eng.sessionLabel || 'Scripture Playlist') : 'Scripture';
+    this._updateMediaSession(refText, trans, !visible ? 'none' : (isPaused ? 'paused' : 'playing'), album);
 
     this._$('.voice-rate-val').textContent = `${eng.settings.rate.toFixed(1)}×`;
-    this._$('.voice-delay-val').textContent = `${(eng.settings.repeatDelayMs / 1000).toFixed(1)}s`;
+    this._$('.voice-delay-val').textContent = `${(eng.effectiveRepeatDelayMs / 1000).toFixed(1)}s`;
 
     this.el.querySelectorAll('.voice-repeat-btn').forEach(b => {
-      const on = b.dataset.mode === eng.settings.repeatMode;
+      const on = b.dataset.mode === eng.effectiveRepeatMode;
       b.classList.toggle('active', on);
       b.setAttribute('aria-pressed', String(on));
+      if (b.dataset.mode === 'verse') b.hidden = eng.isPlaylistSession;
+      if (b.dataset.mode === 'passage') b.textContent = eng.isPlaylistSession ? 'Playlist' : 'Passage';
     });
 
     const sel = this._$('.voice-select');
@@ -1417,32 +1643,16 @@ function slugForRef(ref) {
 
 // How many verses to fetch/render at once when preparing a chapter.
 const SEQ_CONCURRENCY = 6;
+// Very large playlists stay as a lazy per-verse queue. Building one enormous
+// in-memory MP3 is wasteful and can crash mobile Safari; normal passages and
+// medium playlists still get the lock-screen-safe stitched path.
+const MAX_STITCHED_ITEMS = 180;
+const SEQUENCE_READY_WAIT_MS = 140;
 
 // A valid, empty WAV. Playing this inside a user gesture is what unlocks the
 // audio element on iOS, so the real play() — which now happens after fetching
 // and stitching a whole chapter — isn't rejected for being outside a gesture.
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
-
-// Repeat delay, baked into the audio instead of timed in JavaScript.
-//
-// el.loop restarts the instant a stream ends and offers no way to insert a
-// gap, so a delay would otherwise force the JS path — which iOS suspends when
-// the screen locks. Appending real silence makes the gap part of the stream,
-// so a repeat with a pause still loops natively.
-//
-// One MPEG-2 Layer III frame at 24 kHz / 128 kbps mono, matching what the TTS
-// renders produce: 72 * 128000 / 24000 = 384 bytes, 576 samples = 24 ms. A
-// frame whose header is valid and whose payload is zero decodes to silence.
-const SILENCE_HEADER = [0xFF, 0xF3, 0xC4, 0xC0];
-const SILENCE_FRAME_BYTES = 384;
-const SILENCE_FRAME_MS = 24;
-
-function silenceBlob(ms) {
-  const frames = Math.max(1, Math.round(ms / SILENCE_FRAME_MS));
-  const bytes = new Uint8Array(frames * SILENCE_FRAME_BYTES);
-  for (let i = 0; i < frames; i++) bytes.set(SILENCE_HEADER, i * SILENCE_FRAME_BYTES);
-  return { blob: new Blob([bytes], { type: 'audio/mpeg' }), seconds: (frames * SILENCE_FRAME_MS) / 1000 };
-}
 
 // Read a blob's playing time without attaching it to the visible player.
 function measureDuration(blob) {
@@ -1487,6 +1697,9 @@ class AudioFileProvider {
     this._bust = new Set();        // storage urls whose next fetch must skip the HTTP cache
     this._settle = null;
     this._fallbackHandle = null;
+    this._jobToken = 0;
+    this._paused = false;
+    this._resumeWaiters = [];
     this._srcUrl = null;           // object URL currently attached to the element
 
     // A whole passage stitched into one continuous stream. This is what lets
@@ -1495,7 +1708,7 @@ class AudioFileProvider {
     // can no longer stop the audio.
     this._unlocked = false;
     this._repeatOpts = {};
-    this._seq = null;              // { key, parts:[{ref,start,end}], total }
+    this._seq = null;              // { key, parts:[{ref,translation,start,end}], total }
     this._seqPromise = null;
     this._seqKey = '';
   }
@@ -1514,23 +1727,39 @@ class AudioFileProvider {
   getVoices(...args) { return this.fallback.getVoices(...args); }
   onVoiceSelected(...args) { return this.fallback.onVoiceSelected?.(...args); }
 
-  _translation() {
-    try { return localStorage.getItem('active_translation') || 'kjv'; } catch { return 'kjv'; }
+  _waitUntilResumed() {
+    if (!this._paused) return Promise.resolve();
+    return new Promise(resolve => this._resumeWaiters.push(resolve));
+  }
+
+  _releaseResumeWaiters() {
+    const waiters = this._resumeWaiters.splice(0);
+    waiters.forEach(resolve => resolve());
+  }
+
+  _translation(value = null) {
+    let requested = typeof value === 'string' ? value : value?.translation;
+    if (!requested) {
+      try { requested = localStorage.getItem('active_translation') || 'kjv'; }
+      catch { requested = 'kjv'; }
+    }
+    const normalized = String(requested).trim().toLowerCase();
+    return /^[a-z0-9_-]+$/.test(normalized) ? normalized : 'kjv';
   }
 
   // Misses must be per translation. Keyed on ref alone, a verse that failed
   // to render in one translation would be permanently skipped in every other
   // one for the rest of the session.
-  _missKey(ref) { return `${this._translation()}|${ref}`; }
+  _missKey(ref, translation = null) { return `${this._translation(translation)}|${ref}`; }
 
-  _storageUrl(ref) {
-    return `${AUDIO_BUCKET_URL}/${this._translation()}/${slugForRef(ref)}.mp3`;
+  _storageUrl(ref, translation = null) {
+    return `${AUDIO_BUCKET_URL}/${this._translation(translation)}/${slugForRef(ref)}.mp3`;
   }
 
   // Audio committed to the repo, served straight off GitHub Pages. Lets a
   // rendered chapter work with no Supabase setup at all.
-  _localUrl(ref) {
-    return `./audio/${this._translation()}/${slugForRef(ref)}.mp3`;
+  _localUrl(ref, translation = null) {
+    return `./audio/${this._translation(translation)}/${slugForRef(ref)}.mp3`;
   }
 
   // One <audio> element for the whole session. iOS only unlocks playback on a
@@ -1570,8 +1799,9 @@ class AudioFileProvider {
   }
 
   // Resolve a ref to its audio Blob: repo file, then Storage, then render.
-  _resolve(ref) {
-    const url = this._storageUrl(ref);
+  _resolve(ref, itemTranslation = null) {
+    const translation = this._translation(itemTranslation);
+    const url = this._storageUrl(ref, translation);
     if (this._blobs.has(url)) return Promise.resolve(this._blobs.get(url));
     if (this._inflight.has(url)) return this._inflight.get(url);
 
@@ -1582,7 +1812,7 @@ class AudioFileProvider {
 
     const job = (async () => {
       // 1. Repo-committed audio (no Supabase needed at all).
-      let res = await fetch(this._localUrl(ref), { cache: mode }).catch(() => null);
+      let res = await fetch(this._localUrl(ref, translation), { cache: mode }).catch(() => null);
 
       // 2. Storage — the normal path once a verse has ever been rendered.
       if (!res?.ok) res = await fetch(url, { cache: mode }).catch(() => null);
@@ -1599,7 +1829,7 @@ class AudioFileProvider {
               'Authorization': `Bearer ${SUPABASE_PUBLIC_KEY}`,
               'apikey': SUPABASE_PUBLIC_KEY,
             },
-            body: JSON.stringify({ ref, translation: this._translation(), voice: AUDIO_VOICE }),
+            body: JSON.stringify({ ref, translation, voice: AUDIO_VOICE }),
             signal: ctrl.signal,
           });
           if (!gen.ok) throw new Error(`tts ${gen.status}`);
@@ -1633,76 +1863,83 @@ class AudioFileProvider {
   prepareSequence(items, { onStatus, ...repeat } = {}) {
     this._seq = null;
     this._seqPromise = null;
+    this._seqKey = '';
     if (repeat.repeatMode !== undefined) this._repeatOpts = repeat;
     if (!this._canPlay() || !items?.length) return;
+    if (items.length > MAX_STITCHED_ITEMS) {
+      return;
+    }
 
-    const refs = items.map(it => it?.ref).filter(Boolean);
-    if (refs.length !== items.length) return;   // no refs: single-file path
+    const entries = items.map(item => ({
+      ref: item?.ref,
+      translation: this._translation(item),
+    }));
+    if (entries.some(entry => !entry.ref)) return;   // no refs: single-file path
 
-    const key = `${this._translation()}|${refs.join('|')}`;
+    const assetKey = entry => `${entry.translation}|${entry.ref}`;
+    const key = entries.map(assetKey).join('||');
     this._seqKey = key;
 
     this._seqPromise = (async () => {
+      // Resolve and measure each unique translation/reference only once. A
+      // playlist may intentionally repeat the same card dozens of times.
+      const uniqueEntries = [...new Map(entries.map(entry => [assetKey(entry), entry])).values()];
       let done = 0;
-      const blobs = await mapLimit(refs, SEQ_CONCURRENCY, async (ref) => {
+      const resolved = await mapLimit(uniqueEntries, SEQ_CONCURRENCY, async entry => {
         try {
-          const b = await this._resolve(ref);
-          return b;
+          const blob = await this._resolve(entry.ref, entry.translation);
+          const duration = await measureDuration(blob);
+          return duration ? { key: assetKey(entry), blob, duration } : null;
         } catch {
           return null;
         } finally {
           done++;
-          if (refs.length > 1) onStatus?.(`Preparing chapter… ${done}/${refs.length}`);
+          if (uniqueEntries.length > 1) onStatus?.(`Preparing audio… ${done}/${uniqueEntries.length}`);
         }
       });
 
       // A single missing verse would silently shift every later offset, so
       // fall back to per-verse playback rather than play the wrong audio.
-      if (this._seqKey !== key || blobs.some(b => !b)) return null;
-
-      const durations = await mapLimit(blobs, SEQ_CONCURRENCY, b => measureDuration(b));
-      if (this._seqKey !== key || durations.some(d => !d)) return null;
+      if (this._seqKey !== key || resolved.some(asset => !asset)) return null;
+      const assets = new Map(resolved.map(asset => [asset.key, asset]));
+      const blobs = entries.map(entry => assets.get(assetKey(entry))?.blob);
+      const durations = entries.map(entry => assets.get(assetKey(entry))?.duration);
+      if (blobs.some(blob => !blob) || durations.some(duration => !duration)) return null;
 
       const parts = [];
       let t = 0;
-      refs.forEach((ref, i) => {
-        parts.push({ ref, start: t, end: t + durations[i] });
+      entries.forEach((entry, i) => {
+        parts.push({ ...entry, start: t, end: t + durations[i] });
         t += durations[i];
       });
 
-      // Append the repeat gap so a looping stream pauses without JS. Rebuilt
-      // whenever the delay changes (see applyRepeat).
-      const pieces = blobs.slice();
-      const gapMs = Math.max(0, this._repeatOpts?.repeatDelayMs || 0);
-      let gap = 0;
-      if (gapMs > 0 && this._nativeLoop(this._repeatOpts)) {
-        const sil = silenceBlob(gapMs);
-        pieces.push(sil.blob);
-        gap = sil.seconds;
-      }
-
       const seq = {
         key,
-        gapMs: gap > 0 ? gapMs : 0,
         parts,
-        total: t + gap,
-        blob: new Blob(pieces, { type: 'audio/mpeg' }),
+        total: t,
+        blob: new Blob(blobs, { type: 'audio/mpeg' }),
       };
       onStatus?.('');
       return seq;
     })().catch(() => null);
   }
 
-  async _sequence(index, ref) {
+  async _sequence(index, ref, itemTranslation = null) {
     if (!this._seqPromise) return null;
-    const seq = this._seq || await this._seqPromise;
+    let timer = null;
+    const seq = this._seq || await Promise.race([
+      this._seqPromise,
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), SEQUENCE_READY_WAIT_MS); })
+    ]);
+    if (timer) clearTimeout(timer);
     if (!seq) return null;
     if (this._seq !== seq) {
       this._seq = seq;
       this._attach(seq.blob);
     }
     const part = seq.parts[index];
-    if (!part || part.ref !== ref) return null;
+    const translation = this._translation(itemTranslation);
+    if (!part || part.ref !== ref || part.translation !== translation) return null;
     return { seq, part };
   }
 
@@ -1710,28 +1947,25 @@ class AudioFileProvider {
   // at all, which is the only way repeat keeps going once the screen locks.
   // It is only correct when the loaded stream is exactly what should repeat:
   // the whole passage for passage-repeat, or a single-verse playlist for
-  // verse-repeat. A repeat delay needs a gap, which only JS can produce.
-  _nativeLoop(opts = {}) {
-    if (opts.repeatMode === 'passage') return true;
+  // verse-repeat. Delayed repeats deliberately stay on the engine-timer path:
+  // if the element looped too, both clocks would race and restart the first
+  // words after every boundary.
+  _nativeLoop(opts = {}, isSequence = false) {
+    if (opts.rate != null && Math.abs((Number(opts.rate) || 1) - 1) > 0.001) return false;
+    if (Math.max(0, Number(opts.repeatDelayMs) || 0) > 0) return false;
+    // Passage looping is only safe when the element contains the entire
+    // stitched passage. On the per-verse fallback path it would trap playback
+    // on the first verse forever.
+    if (opts.repeatMode === 'passage') return isSequence;
     if (opts.repeatMode === 'verse') return (opts.count || 1) === 1;
     return false;
   }
 
   applyRepeat(opts = {}) {
-    const prev = this._repeatOpts || {};
     this._repeatOpts = opts;
-    if (this._el) this._el.loop = this._nativeLoop(opts);
-
-    // The gap lives inside the stitched blob, so a changed delay — or a
-    // change in whether we loop natively at all — means rebuilding it. The
-    // engine restarts the verse, which picks up the new stream.
-    const wantGap = this._nativeLoop(opts) ? Math.max(0, opts.repeatDelayMs || 0) : 0;
-    const haveGap = this._seq?.gapMs || 0;
-    if (this._seq && wantGap !== haveGap) {
-      this._seq = null;
-      this._seqPromise = null;
-      this._seqKey = '';
-      return true;      // caller must restart for the rebuilt stream
+    if (this._el) {
+      this._el.loop = this._nativeLoop(opts, !!this._seq);
+      if (Number.isFinite(opts.rate)) this._el.playbackRate = opts.rate;
     }
     return false;
   }
@@ -1740,7 +1974,7 @@ class AudioFileProvider {
     const el = this._element();
     el.playbackRate = opts.rate || 1;
     this._repeatOpts = opts;
-    el.loop = this._nativeLoop(opts);
+    el.loop = this._nativeLoop(opts, true);
 
     const now = el.currentTime;
     if (opts.restart) {
@@ -1775,44 +2009,73 @@ class AudioFileProvider {
 
   // ── playback ────────────────────────────────────────────────────────────
   speakChunk(text, opts = {}) {
+    // A new chunk is only requested while the engine is actively playing.
+    // Clear stale pause intent left behind when the previous chunk ended
+    // while paused; a pause issued during this async job will set it again.
+    this._paused = false;
     const ref = opts.item?.ref;
-
-    if (!ref || !this._canPlay() || this._misses.has(this._missKey(ref))) {
-      return this.fallback.speakChunk(text, opts);
-    }
-
+    const translation = this._translation(opts.item);
+    const jobToken = ++this._jobToken;
     let cancelled = false;
+    const isCancelled = () => cancelled || jobToken !== this._jobToken;
+    const playFallback = async () => {
+      await this._waitUntilResumed();
+      if (isCancelled()) return;
+      const fallbackHandle = this.fallback.speakChunk(text, opts);
+      this._fallbackHandle = fallbackHandle;
+      try {
+        return await fallbackHandle.promise;
+      } finally {
+        if (this._fallbackHandle === fallbackHandle) this._fallbackHandle = null;
+      }
+    };
+
+    if (!ref || !this._canPlay() || this._misses.has(this._missKey(ref, translation))) {
+      return {
+        promise: playFallback(),
+        cancel: () => {
+          cancelled = true;
+          if (this._jobToken === jobToken) this._jobToken++;
+          try { this._fallbackHandle?.cancel(); } catch {}
+          this._fallbackHandle = null;
+        },
+      };
+    }
 
     const promise = (async () => {
       // Continuous stream first — the only mode that survives a locked screen.
-      const seq = await this._sequence(opts.index ?? -1, ref);
-      if (cancelled) return;
+      const seq = await this._sequence(opts.index ?? -1, ref, translation);
+      if (isCancelled()) return;
       if (seq) {
+        await this._waitUntilResumed();
+        if (isCancelled()) return;
         opts.onStatus?.('');
         return this._playSequenced(seq.part, opts);
       }
 
       let blob;
       try {
-        blob = await this._resolve(ref);
+        blob = await this._resolve(ref, translation);
       } catch {
-        this._misses.add(this._missKey(ref));
-        if (cancelled) return;
+        this._misses.add(this._missKey(ref, translation));
+        if (isCancelled()) return;
         opts.onStatus?.('');
-        this._fallbackHandle = this.fallback.speakChunk(text, opts);
-        return this._fallbackHandle.promise;
+        return playFallback();
       }
-      if (cancelled) return;
+      if (isCancelled()) return;
+      await this._waitUntilResumed();
+      if (isCancelled()) return;
       opts.onStatus?.('');
       return this._play(blob, opts);
     })();
 
-    if (!this._blobs.has(this._storageUrl(ref)) && !this._seq) opts.onStatus?.('Preparing audio…');
+    if (!this._blobs.has(this._storageUrl(ref, translation)) && !this._seq) opts.onStatus?.('Preparing audio…');
 
     return {
       promise,
       cancel: () => {
         cancelled = true;
+        if (this._jobToken === jobToken) this._jobToken++;
         try { this._fallbackHandle?.cancel(); } catch {}
         this._fallbackHandle = null;
         this._stopElement();
@@ -1823,7 +2086,7 @@ class AudioFileProvider {
   _play(blob, opts = {}) {
     const el = this._attach(blob);
     this._repeatOpts = opts;
-    el.loop = this._nativeLoop(opts);
+    el.loop = this._nativeLoop(opts, false);
     return new Promise((resolve, reject) => {
       const done = (fn) => (...a) => { this._settle = null; el.onended = el.onerror = null; fn(...a); };
       this._settle = { cleanup: () => { el.onended = el.onerror = null; } };
@@ -1857,13 +2120,14 @@ class AudioFileProvider {
   // synthesize again and overwrite the object. `force` is ignored by older
   // deployments of the function, in which case this still repairs local
   // corruption — the common case.
-  async reload(ref) {
+  async reload(ref, itemTranslation = null) {
     if (!ref) return false;
-    const url = this._storageUrl(ref);
+    const translation = this._translation(itemTranslation);
+    const url = this._storageUrl(ref, translation);
 
     this._blobs.delete(url);
     this._inflight.delete(url);
-    this._misses.delete(this._missKey(ref));
+    this._misses.delete(this._missKey(ref, translation));
     // The stitched stream embeds the stale copy, so it has to be rebuilt too.
     this._seq = null;
     this._seqPromise = null;
@@ -1873,7 +2137,7 @@ class AudioFileProvider {
     try {
       const cache = await caches.open('scripture-audio');
       await cache.delete(url, { ignoreSearch: true });
-      await cache.delete(this._localUrl(ref), { ignoreSearch: true });
+      await cache.delete(this._localUrl(ref, translation), { ignoreSearch: true });
     } catch {}
 
     try {
@@ -1885,7 +2149,7 @@ class AudioFileProvider {
           'apikey': SUPABASE_PUBLIC_KEY,
         },
         body: JSON.stringify({
-          ref, translation: this._translation(), voice: AUDIO_VOICE, force: true,
+          ref, translation, voice: AUDIO_VOICE, force: true,
         }),
       });
     } catch {}
@@ -1920,19 +2184,27 @@ class AudioFileProvider {
   }
 
   pause() {
+    this._paused = true;
     if (this._fallbackHandle) return this.fallback.pause();
     try { this._el?.pause(); } catch {}
   }
 
   resume() {
+    this._paused = false;
+    this._releaseResumeWaiters();
     if (this._fallbackHandle) return this.fallback.resume();
-    try { this._el?.play?.().catch(() => {}); } catch {}
+    if (this._settle) {
+      try { this._el?.play?.().catch(() => {}); } catch {}
+    }
   }
 
   // Stop the current utterance only. The stitched passage is deliberately
   // kept: prev/next go through here, and rebuilding a whole chapter on every
   // skip would be both slow and pointless.
   cancel() {
+    this._jobToken++;
+    this._paused = false;
+    this._releaseResumeWaiters();
     try { this.fallback.cancel(); } catch {}
     this._fallbackHandle = null;
     this._stopElement();
@@ -1958,8 +2230,9 @@ class AudioFileProvider {
   prefetch(text, opts = {}) {
     if (this._seq || this._seqPromise) return;
     const ref = opts.item?.ref;
-    if (!ref || this._misses.has(this._missKey(ref)) || !this._canPlay()) return;
-    this._resolve(ref).catch(() => {});
+    const translation = this._translation(opts.item);
+    if (!ref || this._misses.has(this._missKey(ref, translation)) || !this._canPlay()) return;
+    this._resolve(ref, translation).catch(() => {});
   }
 }
 
@@ -1976,9 +2249,15 @@ function initVoice(appCallbacks = {}) {
       player && player.update();
       try { appCallbacks.onItemStart?.(item, i, eng); } catch {}
     },
+    onItemEnd: (item, i, eng, detail) => {
+      try { appCallbacks.onItemEnd?.(item, i, eng, detail); } catch {}
+    },
     onStateChange: (state, eng) => {
       player && player.update();
       try { appCallbacks.onStateChange?.(state, eng); } catch {}
+    },
+    onPlaybackEnd: (reason, eng, session) => {
+      try { appCallbacks.onPlaybackEnd?.(reason, eng, session); } catch {}
     },
   });
   // If the saved voice is a Kokoro voice, start downloading the model now so
@@ -1990,10 +2269,22 @@ function initVoice(appCallbacks = {}) {
 export const Voice = {
   get isSupported() { return engine.isSupported; },
   get state() { return engine.state; },
+  get sessionType() { return engine.sessionType; },
+  get sessionLabel() { return engine.sessionLabel; },
+  get sessionMetadata() { return { ...engine.sessionMetadata }; },
+  get isPlaylistSession() { return engine.isPlaylistSession; },
+  get repeatMode() { return engine.effectiveRepeatMode; },
+  get repeatDelayMs() { return engine.effectiveRepeatDelayMs; },
+  get currentIndex() { return engine.currentIndex; },
+  get currentItem() { return engine.currentItem; },
+  get itemCount() { return engine.itemCount; },
   playScripture: (items, opts) => engine.playScripture(items, opts),
   pauseScripture: () => engine.pauseScripture(),
   resumeScripture: () => engine.resumeScripture(),
   stopScripture: () => engine.stopScripture(),
+  skipTo: (index) => engine.skipTo(index),
+  next: () => engine.next(),
+  prev: () => engine.prev(),
   setVoice: (id) => engine.setVoice(id),
   setPlaybackRate: (r) => engine.setPlaybackRate(r),
   setRepeatMode: (m) => engine.setRepeatMode(m),

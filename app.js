@@ -1,5 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { Voice, initVoice } from './voice.js?v=18';
+import { Voice, initVoice } from './voice.js?v=19';
 
 // ── Init ─────────────────────────────────────────────
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -7,14 +7,18 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // ── DOM refs ─────────────────────────────────────────
 const biblePane          = document.getElementById('bible-pane');
 const stacksPane         = document.getElementById('stacks-pane');
+const playlistsPane      = document.getElementById('playlists-pane');
 const bibleContent       = document.getElementById('bible-content');
 const stacksContent      = document.getElementById('stacks-content');
+const playlistsContent   = document.getElementById('playlists-content');
 const verseArea          = document.getElementById('verse-area');
 const chapterBar         = document.getElementById('chapter-bar');
 const bookList           = document.getElementById('book-list');
 const stackList          = document.getElementById('stack-list');
 const stackDetail        = document.getElementById('stack-detail');
 const stacksSummary      = document.getElementById('stacks-summary');
+const playlistList       = document.getElementById('playlist-list');
+const playlistDetail     = document.getElementById('playlist-detail');
 const greekPage          = document.getElementById('greek-page');
 const searchInput        = document.getElementById('search-input');
 const searchBtn          = document.getElementById('search-btn');
@@ -26,8 +30,10 @@ const otTab              = document.getElementById('tab-ot');
 const ntTab              = document.getElementById('tab-nt');
 const navBible           = document.getElementById('nav-bible');
 const navStacks          = document.getElementById('nav-stacks');
+const navPlaylists       = document.getElementById('nav-playlists');
 const bottomNav          = document.querySelector('.bottom-nav');
 const newStackBtn        = document.getElementById('new-stack-btn');
+const newPlaylistBtn     = document.getElementById('new-playlist-btn');
 const importStacksBtn    = document.getElementById('import-stacks-btn');
 const exportStacksBtn    = document.getElementById('export-stacks-btn');
 const importStacksFile   = document.getElementById('import-stacks-file');
@@ -50,6 +56,15 @@ const authSignInBtn      = document.getElementById('auth-sign-in');
 const authSignUpBtn      = document.getElementById('auth-sign-up');
 const authSignOutBtn     = document.getElementById('auth-sign-out');
 const authCloseBtn       = document.getElementById('auth-close');
+const playlistAddBackdrop = document.getElementById('playlist-add-backdrop');
+const playlistAddSheet   = document.getElementById('playlist-add-sheet');
+const playlistAddSummary = document.getElementById('playlist-add-summary');
+const playlistAddClose   = document.getElementById('playlist-add-close');
+const playlistAddDestination = document.getElementById('playlist-destination-select');
+const playlistNewNameField = document.getElementById('playlist-new-name-field');
+const playlistNewName    = document.getElementById('playlist-new-name');
+const playlistAddCancel  = document.getElementById('playlist-add-cancel');
+const playlistAddConfirm = document.getElementById('playlist-add-confirm');
 
 // ── State ─────────────────────────────────────────────
 let allBooks        = [];
@@ -61,6 +76,7 @@ const defCache      = new Map();
 let currentVerses   = [];
 let appMode         = 'bible';
 let activeStackId   = null;
+let activePlaylistId = null;
 let activePicker    = null;
 let selectedVerses  = [];
 let verseActionMode = false;
@@ -71,6 +87,9 @@ let suppressVerseTapUntil = 0;
 let stackCompareMode = false;
 let activeStackCompareIdx = null;
 let stackCompareSelectedRefs = [];
+let playlistSelectionMode = false;
+let playlistSelectionTargetId = null;
+const playlistSelectedCards = new Map();
 let bookOrderMode   = localStorage.getItem('book_order_mode') || 'traditional';
 let activeTranslation = localStorage.getItem('active_translation') || 'kjv';
 const TRANSLATIONS  = { kjv: 'KJV', bsb: 'BSB', web: 'WEB', akjv: 'AKJV', ukjv: 'UKJV', mkjv: 'MKJV', litv: 'LITV', cpdv: 'CPDV', darby: 'Darby', webster: 'Webster', dra: 'DRA', ylt: 'YLT', asv: 'ASV', bbe: 'BBE', nheb: 'NHEB', jubilee: 'Jubilee', leb: 'LEB', rotherham: 'Rotherham' };
@@ -79,9 +98,11 @@ const pendingChapterCountLoads = new Set();
 let expandedBookId = null;
 const chromeScrollState = new WeakMap();
 const STACKS_STORAGE_KEY = 'study_stacks';
+const PLAYLISTS_STORAGE_KEY = 'scripture_playlists_v1';
 const SCROLL_STATE_STORAGE_KEY = 'scripture_scroll_state';
 const STACKS_SYNC_DEBOUNCE_MS = 500;
 let stacksCache      = [];
+let playlistsCache   = [];
 let authSession      = null;
 let authUser         = null;
 let stackSyncState   = 'local';
@@ -145,22 +166,28 @@ function closeSheet(backdrop, { restoreFocus = true } = {}) {
   if (backdrop.classList.contains('hidden') && !backdrop.classList.contains('open')) return;
   const existingTimer = sheetCloseTimers.get(backdrop);
   if (existingTimer) clearTimeout(existingTimer);
+  const returnFocus = sheetReturnFocus.get(backdrop);
+  if (backdrop.contains(document.activeElement)) {
+    if (restoreFocus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+    else document.activeElement?.blur?.();
+  }
   backdrop.classList.remove('open');
   backdrop.setAttribute('aria-hidden', 'true');
-  const returnFocus = sheetReturnFocus.get(backdrop);
   const timer = setTimeout(() => {
     sheetCloseTimers.delete(backdrop);
     if (backdrop.classList.contains('open')) return;
     backdrop.classList.add('hidden');
-    if (restoreFocus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   }, prefersReducedMotion() ? 0 : 380);
   sheetCloseTimers.set(backdrop, timer);
 }
 
 function syncBottomNavChrome() {
-  const collapsed = appMode === 'stacks'
-    ? stacksPane.classList.contains('chrome-collapsed')
-    : biblePane.classList.contains('chrome-collapsed');
+  const activePane = appMode === 'stacks'
+    ? stacksPane
+    : appMode === 'playlists'
+      ? playlistsPane
+      : biblePane;
+  const collapsed = activePane.classList.contains('chrome-collapsed');
   bottomNav.classList.toggle('chrome-collapsed', collapsed);
 }
 
@@ -176,6 +203,7 @@ function measurePaneChrome(pane) {
 function measureAllPaneChrome() {
   measurePaneChrome(biblePane);
   measurePaneChrome(stacksPane);
+  measurePaneChrome(playlistsPane);
 }
 
 function schedulePaneChromeMeasure() {
@@ -184,7 +212,7 @@ function schedulePaneChromeMeasure() {
 
 if (typeof ResizeObserver !== 'undefined') {
   const chromeObserver = new ResizeObserver(schedulePaneChromeMeasure);
-  [biblePane, stacksPane].forEach(pane => {
+  [biblePane, stacksPane, playlistsPane].forEach(pane => {
     const topBar = pane.querySelector('.top-bar');
     const chapterRail = pane.querySelector('.chapter-bar');
     if (topBar) chromeObserver.observe(topBar);
@@ -195,7 +223,11 @@ window.addEventListener('resize', schedulePaneChromeMeasure, { passive: true });
 
 function setPaneChromeCollapsed(pane, collapsed) {
   pane.classList.toggle('chrome-collapsed', collapsed);
-  if ((pane === biblePane && appMode === 'bible') || (pane === stacksPane && appMode === 'stacks')) {
+  if (
+    (pane === biblePane && appMode === 'bible') ||
+    (pane === stacksPane && appMode === 'stacks') ||
+    (pane === playlistsPane && appMode === 'playlists')
+  ) {
     syncBottomNavChrome();
   }
 }
@@ -205,11 +237,12 @@ function showPaneChrome(pane) {
 }
 
 function showActivePaneChrome() {
-  showPaneChrome(appMode === 'stacks' ? stacksPane : biblePane);
+  showPaneChrome(appMode === 'stacks' ? stacksPane : appMode === 'playlists' ? playlistsPane : biblePane);
 }
 
 bibleContent.addEventListener('scroll', captureScrollState, { passive: true });
 stacksContent.addEventListener('scroll', captureScrollState, { passive: true });
+playlistsContent.addEventListener('scroll', captureScrollState, { passive: true });
 window.addEventListener('pagehide', () => captureScrollState({ immediate: true }));
 window.addEventListener('pageshow', () => restoreSavedScrollState());
 document.addEventListener('visibilitychange', () => {
@@ -256,6 +289,10 @@ function captureScrollState({ immediate = false } = {}) {
       top: stacksContent.scrollTop,
       activeStackId
     },
+    playlists: {
+      top: playlistsContent.scrollTop,
+      activePlaylistId
+    },
     savedAt: Date.now()
   };
   lastScrollState = state;
@@ -288,6 +325,12 @@ function restoreSavedScrollState(saved = readSavedScrollState()) {
   if (appMode === 'stacks') {
     if (!saved.stacks || saved.stacks.activeStackId !== activeStackId) return;
     restoreScrollTop(stacksContent, saved.stacks.top);
+    return;
+  }
+
+  if (appMode === 'playlists') {
+    if (!saved.playlists || saved.playlists.activePlaylistId !== activePlaylistId) return;
+    restoreScrollTop(playlistsContent, saved.playlists.top);
     return;
   }
 
@@ -651,13 +694,14 @@ function closeTranslationPicker({ restoreFocus = true } = {}) {
   activeTranslationPicker = null;
   activeTranslationPickerAnchor = null;
   anchor?.setAttribute('aria-expanded', 'false');
+  const returnFocus = backdrop.returnFocusElement;
+  if (backdrop.contains(document.activeElement)) {
+    if (restoreFocus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+    else document.activeElement?.blur?.();
+  }
   backdrop.classList.remove('open');
   backdrop.setAttribute('aria-hidden', 'true');
-  setTimeout(() => {
-    backdrop.remove();
-    const returnFocus = backdrop.returnFocusElement;
-    if (restoreFocus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
-  }, prefersReducedMotion() ? 0 : 220);
+  setTimeout(() => backdrop.remove(), prefersReducedMotion() ? 0 : 220);
 }
 
 translationLabel.textContent = TRANSLATIONS[activeTranslation] || activeTranslation.toUpperCase();
@@ -682,6 +726,9 @@ function escHtml(str) {
 }
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+function stopTransientVoice() {
+  if (Voice.sessionType !== 'playlist') Voice.stopScripture();
 }
 function debounce(fn, wait = 200) {
   let timer = null;
@@ -774,19 +821,21 @@ async function getBookChapterCount(book) {
 
 function updateNavState() {
   const onBible = appMode === 'bible';
+  const onStacks = appMode === 'stacks';
+  const onPlaylists = appMode === 'playlists';
   biblePane.classList.toggle('is-active', onBible);
-  stacksPane.classList.toggle('is-active', !onBible);
+  stacksPane.classList.toggle('is-active', onStacks);
+  playlistsPane.classList.toggle('is-active', onPlaylists);
   biblePane.setAttribute('aria-hidden', String(!onBible));
-  stacksPane.setAttribute('aria-hidden', String(onBible));
+  stacksPane.setAttribute('aria-hidden', String(!onStacks));
+  playlistsPane.setAttribute('aria-hidden', String(!onPlaylists));
   navBible.classList.toggle('active', onBible);
-  navStacks.classList.toggle('active', !onBible);
-  if (onBible) {
-    navBible.setAttribute('aria-current', 'page');
-    navStacks.removeAttribute('aria-current');
-  } else {
-    navBible.removeAttribute('aria-current');
-    navStacks.setAttribute('aria-current', 'page');
-  }
+  navStacks.classList.toggle('active', onStacks);
+  navPlaylists.classList.toggle('active', onPlaylists);
+  [navBible, navStacks, navPlaylists].forEach(item => item.removeAttribute('aria-current'));
+  if (onBible) navBible.setAttribute('aria-current', 'page');
+  if (onStacks) navStacks.setAttribute('aria-current', 'page');
+  if (onPlaylists) navPlaylists.setAttribute('aria-current', 'page');
 }
 
 function updateSearchEmptyState(message = 'Search within the selected translation or jump to a passage reference.') {
@@ -868,7 +917,7 @@ const modalInput    = document.getElementById('modal-input');
 const modalCancel   = document.getElementById('modal-cancel');
 const modalConfirm  = document.getElementById('modal-confirm');
 
-function showPrompt(title, placeholder = '') {
+function showPrompt(title, placeholder = '', confirmLabel = 'Create') {
   return new Promise(resolve => {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     let settled = false;
@@ -876,7 +925,7 @@ function showPrompt(title, placeholder = '') {
     modalInput.placeholder = placeholder;
     modalInput.value = '';
     modalInput.style.display = 'block';
-    modalConfirm.textContent = 'Create';
+    modalConfirm.textContent = confirmLabel;
     modalBackdrop.setAttribute('aria-hidden', 'false');
     modalBackdrop.classList.remove('hidden');
     setTimeout(() => modalInput.focus(), prefersReducedMotion() ? 0 : 50);
@@ -884,13 +933,16 @@ function showPrompt(title, placeholder = '') {
     function done(val) {
       if (settled) return;
       settled = true;
+      if (modalBackdrop.contains(document.activeElement)) {
+        if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+        else document.activeElement?.blur?.();
+      }
       modalBackdrop.classList.add('hidden');
       modalBackdrop.setAttribute('aria-hidden', 'true');
       modalCancel.removeEventListener('click', cancel);
       modalConfirm.removeEventListener('click', confirm);
       modalInput.removeEventListener('keydown', keydown);
       modalBackdrop.removeEventListener('click', backdropClick);
-      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
       resolve(val);
     }
     function confirm() { const v = modalInput.value.trim(); done(v || null); }
@@ -922,6 +974,10 @@ function showConfirm(title, confirmLabel = 'Delete') {
     function done(val) {
       if (settled) return;
       settled = true;
+      if (modalBackdrop.contains(document.activeElement)) {
+        if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+        else document.activeElement?.blur?.();
+      }
       modalBackdrop.classList.add('hidden');
       modalBackdrop.setAttribute('aria-hidden', 'true');
       modalConfirm.classList.remove('danger');
@@ -929,7 +985,6 @@ function showConfirm(title, confirmLabel = 'Delete') {
       modalConfirm.removeEventListener('click', confirm);
       document.removeEventListener('keydown', keydown);
       modalBackdrop.removeEventListener('click', backdropClick);
-      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
       resolve(val);
     }
     function confirm() { done(true); }
@@ -961,6 +1016,18 @@ async function initAuth() {
 async function restoreInitialView() {
   const saved = readSavedScrollState();
   if (!saved) return false;
+
+  if (saved.mode === 'playlists') {
+    const playlists = loadPlaylists();
+    appMode = 'playlists';
+    activePlaylistId = playlists.find(playlist => playlist.id === saved.playlists?.activePlaylistId)?.id
+      || playlists[0]?.id
+      || null;
+    updateNavState();
+    renderPlaylists();
+    restoreSavedScrollState(saved);
+    return true;
+  }
 
   if (saved.mode === 'stacks') {
     const stacks = loadStacks();
@@ -1024,6 +1091,7 @@ async function init() {
   renderBookList();
   renderStacksSummary();
   renderStacksList();
+  renderPlaylists();
   updateNavState();
   updateSearchEmptyState();
   const restored = await restoreInitialView();
@@ -1175,7 +1243,7 @@ async function selectChapter(num) {
     && activeChapter === num
     && activeTranslation === translation;
 
-  Voice.stopScripture();
+  stopTransientVoice();
   activeChapter = num;
   updateBibleChrome();
   renderBookList();
@@ -1267,6 +1335,7 @@ function chapterVoiceItems() {
     ref: `${activeBook.name} ${activeChapter}:${v.verse}`,
     text: v.text,
     vnum: v.verse,
+    translation: activeTranslation,
   }));
 }
 function playCurrentChapter() {
@@ -1287,8 +1356,15 @@ function highlightSpokenVerse(item) {
   row.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
 }
 initVoice({
-  onItemStart: highlightSpokenVerse,
-  onStateChange: state => { if (state === 'idle') clearVoiceHighlight(); },
+  onItemStart: item => {
+    highlightSpokenVerse(item);
+    syncPlaylistPlaybackUi(item, Voice.state);
+  },
+  onStateChange: state => {
+    if (state === 'idle') clearVoiceHighlight();
+    syncPlaylistLoopFromVoice();
+    syncPlaylistPlaybackUi(Voice.currentItem, state);
+  },
 });
 
 // ── Compare translations ───────────────────────────────
@@ -1876,7 +1952,7 @@ function parseReference(query) {
 }
 
 async function openBibleLocation(book, chapter) {
-  Voice.stopScripture();
+  stopTransientVoice();
   appMode = 'bible';
   updateNavState();
   activeTestament = book.testament;
@@ -2355,6 +2431,7 @@ function normalizeStackCard(card) {
       : [];
   if (!passages.length) return null;
   return {
+    id: String(card?.id || genId()),
     passages,
     note: String(card?.note || ''),
     addedAt: Number(card?.addedAt) || nowTs(),
@@ -2555,13 +2632,16 @@ function openAuthModal() {
 
 function closeAuthModal() {
   if (authBackdrop.classList.contains('hidden')) return;
+  if (authBackdrop.contains(document.activeElement)) {
+    if (authReturnFocus?.isConnected) authReturnFocus.focus({ preventScroll: true });
+    else document.activeElement?.blur?.();
+  }
   authBackdrop.classList.add('hidden');
   authBackdrop.setAttribute('aria-hidden', 'true');
   accountBtn.setAttribute('aria-expanded', 'false');
   authOpenBtn.setAttribute('aria-expanded', 'false');
   authPasswordInput.value = '';
   setAuthFeedback('');
-  if (authReturnFocus?.isConnected) authReturnFocus.focus({ preventScroll: true });
   authReturnFocus = null;
 }
 
@@ -2706,7 +2786,8 @@ async function handleSignOut() {
 
 // ── Mode toggle ───────────────────────────────────────
 function setMode(mode) {
-  if (appMode !== mode) Voice.stopScripture();
+  if (!['bible', 'stacks', 'playlists'].includes(mode)) return;
+  if (appMode !== mode) stopTransientVoice();
   const alreadyActive = appMode === mode;
   const persisted = readSavedScrollState();
   const currentState = captureScrollState({ immediate: true });
@@ -2741,6 +2822,16 @@ function setMode(mode) {
     return;
   }
 
+  if (mode === 'playlists') {
+    clearSelection();
+    clearStackCompareMode();
+    if (playlistSelectionMode) cancelPlaylistSelection({ render: false });
+    renderPlaylists();
+    restoreSavedScrollState(saved);
+    return;
+  }
+
+  if (playlistSelectionMode) cancelPlaylistSelection({ render: false });
   clearStackCompareMode();
   updateBibleChrome();
   renderBookList();
@@ -2781,6 +2872,7 @@ function refreshStacksUi({ preserveView = false } = {}) {
 
 navBible.addEventListener('click', () => setMode('bible'));
 navStacks.addEventListener('click', () => setMode('stacks'));
+navPlaylists.addEventListener('click', () => setMode('playlists'));
 
 // ── Render stacks rail ────────────────────────────────
 function renderStacksList() {
@@ -2811,7 +2903,7 @@ function renderStacksList() {
 function openStack(id) {
   if (activeStackId !== id) {
     clearStackCompareMode();
-    Voice.stopScripture();
+    stopTransientVoice();
   }
   activeStackId = id;
   resetChromeScroll(stacksContent, stacksPane);
@@ -2832,13 +2924,34 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
 
   let html = `
     <div class="stack-panel">
-    <div class="stack-view">
+    <div class="stack-view${playlistSelectionMode ? ' playlist-selection-active' : ''}">
       <div class="stack-view-header">
         <input class="stack-title-input" id="stack-title-input"
-          value="${escHtml(stack.title)}" maxlength="60" placeholder="Stack title…" aria-label="Stack title" />
-        <button class="delete-stack-btn" id="delete-stack-btn" type="button">Delete Stack</button>
+          value="${escHtml(stack.title)}" maxlength="60" placeholder="Stack title…" aria-label="Stack title" ${playlistSelectionMode ? 'readonly' : ''} />
+        ${playlistSelectionMode ? '' : '<button class="delete-stack-btn" id="delete-stack-btn" type="button">Delete Stack</button>'}
       </div>
       <div class="stack-verse-count">${countStackPassages(stack)} saved passage${countStackPassages(stack) !== 1 ? 's' : ''} across ${stack.verses.length} card${stack.verses.length !== 1 ? 's' : ''}</div>
+      ${playlistSelectionMode ? `
+        <div class="playlist-selection-bar">
+          <div class="playlist-selection-copy">
+            <strong>${playlistSelectedCards.size} selected</strong>
+            <span>Switch stacks to keep choosing cards.</span>
+            <span class="sr-only" role="status" aria-live="polite">${playlistSelectedCards.size} scripture card${playlistSelectedCards.size !== 1 ? 's' : ''} selected</span>
+          </div>
+          <div class="playlist-selection-actions">
+            <button id="playlist-selection-cancel" type="button">Cancel</button>
+            <button id="playlist-selection-continue" class="primary" type="button" ${playlistSelectedCards.size ? '' : 'disabled'}>Add selected</button>
+          </div>
+        </div>
+      ` : `
+        <button id="build-playlist-btn" class="stack-playlist-builder" type="button">
+          <span class="stack-playlist-builder-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h10M5 12h10M5 17h7M19 9v8m-4-4h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <span class="stack-playlist-builder-copy"><strong>Build a playlist</strong><span>Choose cards from this or any stack</span></span>
+          <span class="stack-playlist-builder-chevron" aria-hidden="true">›</span>
+        </button>
+      `}
       <div class="stack-add-bar">
         <input class="stack-add-input" id="stack-add-input" type="search" placeholder="Search words or enter a reference…" autocomplete="off" enterkeyhint="search" aria-label="Find a verse to add" />
         <button class="stack-add-search-btn" id="stack-add-search-btn" type="button">Search</button>
@@ -2853,6 +2966,7 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
       const passages = v.passages ?? [{ ref: v.ref, text: v.text }];
       const hasNote = v.note && v.note.trim();
       const isActiveCard = stackCompareMode && idx === activeStackCompareIdx;
+      const isPlaylistSelected = playlistSelectedCards.has(playlistCardSelectionKey(stack.id, v.id));
       let cardRef;
       if (passages.length > 1 && passages.every(p => p.ref.replace(/:\d+$/, '') === passages[0].ref.replace(/:\d+$/, ''))) {
         const nums = passages.map(p => parseInt(p.ref.match(/:(\d+)$/)?.[1])).filter(n => !isNaN(n));
@@ -2871,14 +2985,19 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
                  data-passage-ref="${escHtml(p.ref)}">
               ${verseNum && passages.length > 1 ? `<span class="stack-verse-num">${verseNum}</span>` : ''}
               <div class="stack-verse-text">${escHtml(p.text)}</div>
-              ${pi > 0 ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" type="button" title="Remove passage" aria-label="Remove ${escHtml(p.ref)}">×</button>` : ''}
+              ${pi > 0 && !playlistSelectionMode ? `<button class="remove-passage-btn" data-cardidx="${idx}" data-pi="${pi}" type="button" title="Remove passage" aria-label="Remove ${escHtml(p.ref)}">×</button>` : ''}
             </div>`;
       }).join('');
       html += `
-        <div class="stack-verse-card${isActiveCard ? ' action-active' : ''}" data-idx="${idx}">
+        <div class="stack-verse-card${isActiveCard ? ' action-active' : ''}${playlistSelectionMode ? ' playlist-selectable' : ''}${isPlaylistSelected ? ' playlist-selected' : ''}" data-idx="${idx}" data-card-id="${escHtml(v.id)}">
           <div class="stack-verse-card-header">
             <span class="stack-verse-ref">${escHtml(cardRef)}</span>
-            <button class="remove-verse-btn" data-idx="${idx}" type="button" title="Remove card" aria-label="Remove saved card">×</button>
+            ${playlistSelectionMode ? `
+              <button class="playlist-card-select" data-idx="${idx}" type="button" aria-pressed="${isPlaylistSelected}" aria-label="${isPlaylistSelected ? 'Remove' : 'Add'} ${escHtml(cardRef)} ${isPlaylistSelected ? 'from' : 'to'} playlist selection">
+                <span aria-hidden="true">${isPlaylistSelected ? '✓' : '+'}</span>
+                <span>${isPlaylistSelected ? 'Selected' : 'Select'}</span>
+              </button>
+            ` : `<button class="remove-verse-btn" data-idx="${idx}" type="button" title="Remove card" aria-label="Remove saved card">×</button>`}
           </div>
           ${passagesHtml}
           <div class="stack-card-actions">
@@ -2950,6 +3069,30 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
     if (ok) deleteStack(id);
   });
 
+  stackDetail.querySelector('#build-playlist-btn')?.addEventListener('click', () => {
+    beginPlaylistSelection();
+  });
+  stackDetail.querySelector('#playlist-selection-cancel')?.addEventListener('click', () => {
+    cancelPlaylistSelection();
+  });
+  stackDetail.querySelector('#playlist-selection-continue')?.addEventListener('click', () => {
+    openPlaylistAddSheet();
+  });
+  stackDetail.querySelectorAll('.playlist-card-select').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      togglePlaylistCardSelection(id, parseInt(btn.dataset.idx), { restoreFocus: true });
+    });
+  });
+  if (playlistSelectionMode) {
+    stackDetail.querySelectorAll('.stack-verse-card.playlist-selectable').forEach(card => {
+      card.addEventListener('click', e => {
+        if (e.target.closest('button, input, textarea, a')) return;
+        togglePlaylistCardSelection(id, parseInt(card.dataset.idx));
+      });
+    });
+  }
+
   stackDetail.querySelectorAll('.remove-verse-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const ok = await showConfirm('Remove this saved card?', 'Remove');
@@ -2969,11 +3112,12 @@ function renderStackView(id, { preserveScroll = false, resetScroll = false } = {
 
   stackDetail.querySelectorAll('.listen-card-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const card = btn.closest('.stack-verse-card');
-      const items = Array.from(card.querySelectorAll('.stack-verse-row')).map(row => ({
-        ref: row.dataset.passageRef,
-        text: row.querySelector('.stack-verse-text')?.textContent || '',
-      })).filter(it => it.text.trim());
+      const cardData = stack.verses[parseInt(btn.dataset.idx)];
+      const items = (cardData?.passages || []).map(passage => ({
+        ref: passage.ref,
+        text: passage.text,
+        translation: cardData.translation || 'kjv'
+      })).filter(item => item.text.trim());
       if (items.length) Voice.playScripture(items);
     });
   });
@@ -3374,7 +3518,7 @@ function removePassageFromCard(stackId, cardIdx, passageIdx) {
     if (isDragging) return;
     const card = e.target.closest('.stack-verse-card');
     if (!card || e.target.closest('input, button, textarea, a')) return;
-    if (appMode !== 'stacks' || !activeStackId || stackCompareMode) return;
+    if (appMode !== 'stacks' || !activeStackId || stackCompareMode || playlistSelectionMode) return;
     const touch = e.touches[0];
     startX = touch.clientX;
     startY = touch.clientY;
@@ -3530,6 +3674,7 @@ function addVerseToStack(stackId, verseData) {
     return;
   }
   stack.verses.push({
+    id: genId(),
     passages,
     note: '',
     addedAt: Date.now(),
@@ -3547,6 +3692,864 @@ function addVerseToStack(stackId, verseData) {
     renderStacksList();
   }
 }
+
+// ══════════════════════════════════════════════════════
+//  SCRIPTURE PLAYLISTS
+// ══════════════════════════════════════════════════════
+
+const PLAYLIST_REPEAT_MIN = 1;
+const PLAYLIST_REPEAT_MAX = 99;
+const MAX_PLAYLIST_QUEUE_ITEMS = 50000;
+
+function clampPlaylistRepeat(value) {
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed)) return PLAYLIST_REPEAT_MIN;
+  return Math.min(PLAYLIST_REPEAT_MAX, Math.max(PLAYLIST_REPEAT_MIN, parsed));
+}
+
+function formatPassageRefs(passages = []) {
+  const refs = passages.map(passage => String(passage?.ref || '').trim()).filter(Boolean);
+  if (!refs.length) return 'Scripture group';
+  if (refs.length === 1) return refs[0];
+
+  const parsed = refs.map(ref => ref.match(/^(.+?\s+\d+):(\d+)$/));
+  if (parsed.every(Boolean) && parsed.every(match => match[1] === parsed[0][1])) {
+    const verses = parsed.map(match => Number(match[2]));
+    const consecutive = verses.every((verse, index) => index === 0 || verse === verses[index - 1] + 1);
+    if (consecutive) return `${parsed[0][1]}:${verses[0]}–${verses[verses.length - 1]}`;
+    return `${parsed[0][1]}:${verses.join(', ')}`;
+  }
+  return refs.join(' · ');
+}
+
+function normalizePlaylistCard(card) {
+  const passages = Array.isArray(card?.passages)
+    ? card.passages.map(normalizePassage).filter(Boolean)
+    : [];
+  if (!passages.length) return null;
+  return {
+    sourceStackId: String(card?.sourceStackId || ''),
+    sourceStackTitle: String(card?.sourceStackTitle || 'Saved scripture'),
+    sourceCardId: String(card?.sourceCardId || ''),
+    translation: TRANSLATIONS[card?.translation] ? card.translation : 'kjv',
+    passages
+  };
+}
+
+function normalizePlaylistEntry(entry, idx = 0) {
+  const cards = Array.isArray(entry?.cards)
+    ? entry.cards.map(normalizePlaylistCard).filter(Boolean)
+    : [];
+  if (!cards.length) return null;
+  return {
+    id: String(entry?.id || genId()),
+    label: String(entry?.label || formatPassageRefs(cards.flatMap(card => card.passages)) || `Item ${idx + 1}`),
+    repeat: clampPlaylistRepeat(entry?.repeat),
+    cards
+  };
+}
+
+function normalizePlaylist(playlist, idx = 0) {
+  const createdAt = Number(playlist?.createdAt) || Number(playlist?.updatedAt) || nowTs();
+  const entries = Array.isArray(playlist?.entries)
+    ? playlist.entries.map(normalizePlaylistEntry).filter(Boolean)
+    : [];
+  return {
+    id: String(playlist?.id || genId()),
+    title: String(playlist?.title || `Playlist ${idx + 1}`),
+    loop: !!playlist?.loop,
+    entries,
+    createdAt,
+    updatedAt: Number(playlist?.updatedAt) || createdAt
+  };
+}
+
+function normalizePlaylists(rawPlaylists) {
+  if (!Array.isArray(rawPlaylists)) return [];
+  return rawPlaylists.map((playlist, idx) => normalizePlaylist(playlist, idx));
+}
+
+function readLocalPlaylists() {
+  try {
+    return normalizePlaylists(JSON.parse(localStorage.getItem(PLAYLISTS_STORAGE_KEY) || '[]'));
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalPlaylists(playlists) {
+  localStorage.setItem(PLAYLISTS_STORAGE_KEY, JSON.stringify(playlists));
+}
+
+function loadPlaylists() {
+  return playlistsCache;
+}
+
+function savePlaylists(playlists, { render = true } = {}) {
+  try {
+    writeLocalPlaylists(playlists);
+  } catch (error) {
+    console.error('Playlist storage failed', error);
+    playlistsCache = readLocalPlaylists();
+    showToast('Could not save — browser storage is full');
+    return false;
+  }
+  playlistsCache = playlists;
+  if (render && appMode === 'playlists') renderPlaylists({ preserveScroll: true });
+  return true;
+}
+
+function touchPlaylist(playlist) {
+  if (playlist) playlist.updatedAt = nowTs();
+  return playlist;
+}
+
+function playlistCardSelectionKey(stackId, cardId) {
+  return `${String(stackId)}:${String(cardId)}`;
+}
+
+function snapshotStackCard(stack, card) {
+  return normalizePlaylistCard({
+    sourceStackId: stack.id,
+    sourceStackTitle: stack.title,
+    sourceCardId: card.id,
+    translation: card.translation,
+    passages: card.passages
+  });
+}
+
+function playlistCardLabel(card) {
+  return formatPassageRefs(card?.passages || []);
+}
+
+function playlistGroupLabel(cards) {
+  if (cards.length === 1) return playlistCardLabel(cards[0]);
+  const first = playlistCardLabel(cards[0]);
+  return `${first} + ${cards.length - 1} more`;
+}
+
+function countPlaylistVerses(playlist, { includeRepeats = false } = {}) {
+  return (playlist?.entries || []).reduce((total, entry) => {
+    const verseCount = entry.cards.reduce((sum, card) => sum + card.passages.length, 0);
+    return total + verseCount * (includeRepeats ? entry.repeat : 1);
+  }, 0);
+}
+
+function beginPlaylistSelection(targetPlaylistId = null) {
+  const stacks = loadStacks();
+  if (!stacks.length) {
+    showToast('Create a stack and save scripture cards first');
+    return;
+  }
+  playlistSelectionMode = true;
+  playlistSelectionTargetId = loadPlaylists().some(playlist => playlist.id === targetPlaylistId)
+    ? targetPlaylistId
+    : null;
+  playlistSelectedCards.clear();
+  clearStackCompareMode();
+
+  if (appMode !== 'stacks') setMode('stacks');
+  const target = stacks.find(stack => stack.id === activeStackId)?.id || stacks[0].id;
+  activeStackId = target;
+  renderStacksSummary();
+  renderStacksList();
+  renderStackView(target, { preserveScroll: true });
+  showToast('Select cards from any stack');
+}
+
+function cancelPlaylistSelection({ render = true } = {}) {
+  if (!playlistAddBackdrop.classList.contains('hidden')) {
+    closePlaylistAddSheet({ restoreFocus: false });
+  }
+  playlistSelectionMode = false;
+  playlistSelectionTargetId = null;
+  playlistSelectedCards.clear();
+  if (render && appMode === 'stacks' && activeStackId) {
+    renderStackView(activeStackId, { preserveScroll: true });
+  }
+}
+
+function togglePlaylistCardSelection(stackId, cardIdx, { restoreFocus = false } = {}) {
+  if (!playlistSelectionMode) return;
+  const stack = loadStacks().find(item => item.id === stackId);
+  const card = stack?.verses?.[cardIdx];
+  if (!stack || !card) return;
+  const key = playlistCardSelectionKey(stack.id, card.id);
+  if (playlistSelectedCards.has(key)) playlistSelectedCards.delete(key);
+  else playlistSelectedCards.set(key, snapshotStackCard(stack, card));
+  triggerHaptic(10);
+  renderStackView(stackId, { preserveScroll: true });
+  if (restoreFocus) {
+    stackDetail.querySelector(`.playlist-card-select[data-idx="${cardIdx}"]`)?.focus({ preventScroll: true });
+  }
+}
+
+function syncPlaylistAddModeUi() {
+  playlistAddSheet.querySelectorAll('.playlist-add-mode-option').forEach(option => {
+    const radio = option.querySelector('input[type="radio"]');
+    option.classList.toggle('is-selected', !!radio?.checked);
+  });
+}
+
+function syncPlaylistAddDestinationUi() {
+  const creating = playlistAddDestination.value === 'new';
+  playlistNewNameField.classList.toggle('hidden', !creating);
+  const validDestination = creating
+    ? !!playlistNewName.value.trim()
+    : loadPlaylists().some(playlist => playlist.id === playlistAddDestination.value);
+  playlistAddConfirm.disabled = !playlistSelectedCards.size || !validDestination;
+}
+
+function openPlaylistAddSheet() {
+  if (!playlistSelectedCards.size) {
+    showToast('Select at least one scripture card');
+    return;
+  }
+  const playlists = loadPlaylists();
+  playlistAddDestination.innerHTML = `
+    <option value="new">Create a new playlist</option>
+    ${playlists.map(playlist => `<option value="${escHtml(playlist.id)}">${escHtml(playlist.title)}</option>`).join('')}
+  `;
+  playlistAddDestination.value = playlists.some(playlist => playlist.id === playlistSelectionTargetId)
+    ? playlistSelectionTargetId
+    : 'new';
+  const firstCard = playlistSelectedCards.values().next().value;
+  playlistNewName.value = playlistAddDestination.value === 'new'
+    ? `${firstCard?.sourceStackTitle || 'Scripture'} Playlist`
+    : '';
+  const passageCount = Array.from(playlistSelectedCards.values())
+    .reduce((sum, card) => sum + card.passages.length, 0);
+  playlistAddSummary.textContent = `${playlistSelectedCards.size} card${playlistSelectedCards.size !== 1 ? 's' : ''} · ${passageCount} passage${passageCount !== 1 ? 's' : ''}`;
+  const separateRadio = document.getElementById('playlist-add-mode-separate');
+  if (separateRadio) separateRadio.checked = true;
+  syncPlaylistAddModeUi();
+  syncPlaylistAddDestinationUi();
+  document.querySelector('.app').inert = true;
+  openSheet(playlistAddBackdrop);
+  setTimeout(() => {
+    if (playlistAddDestination.value === 'new') playlistNewName.focus({ preventScroll: true });
+    else playlistAddDestination.focus({ preventScroll: true });
+  }, prefersReducedMotion() ? 0 : 60);
+}
+
+function closePlaylistAddSheet(options) {
+  document.querySelector('.app').inert = false;
+  closeSheet(playlistAddBackdrop, options);
+}
+
+function addSelectedCardsToPlaylist() {
+  if (!playlistSelectedCards.size) return;
+  const playlists = loadPlaylists();
+  let playlist;
+  if (playlistAddDestination.value === 'new') {
+    const title = playlistNewName.value.trim();
+    if (!title) {
+      playlistNewName.focus();
+      return;
+    }
+    const stamp = nowTs();
+    playlist = { id: genId(), title, loop: false, entries: [], createdAt: stamp, updatedAt: stamp };
+    playlists.push(playlist);
+  } else {
+    playlist = playlists.find(item => item.id === playlistAddDestination.value);
+  }
+  if (!playlist) {
+    showToast('That playlist is no longer available');
+    syncPlaylistAddDestinationUi();
+    return;
+  }
+
+  const cards = Array.from(playlistSelectedCards.values())
+    .map(normalizePlaylistCard)
+    .filter(Boolean);
+  const addMode = playlistAddSheet.querySelector('input[name="playlist-add-mode"]:checked')?.value || 'separate';
+  const entries = addMode === 'group'
+    ? [{ id: genId(), label: playlistGroupLabel(cards), repeat: 1, cards }]
+    : cards.map(card => ({ id: genId(), label: playlistCardLabel(card), repeat: 1, cards: [card] }));
+  playlist.entries.push(...entries);
+  touchPlaylist(playlist);
+  if (!savePlaylists(playlists, { render: false })) return;
+  const destinationId = playlist.id;
+  const addedCount = entries.length;
+  closePlaylistAddSheet({ restoreFocus: false });
+  cancelPlaylistSelection({ render: false });
+  setMode('playlists');
+  openPlaylist(destinationId, { resetScroll: true });
+  showToast(`Added ${addedCount} playlist item${addedCount !== 1 ? 's' : ''}`);
+}
+
+function compilePlaylistItems(playlist, entries = playlist?.entries || []) {
+  const items = [];
+  const entryCount = entries.length;
+  entries.forEach((entry, entryIndex) => {
+    for (let repeatIndex = 0; repeatIndex < entry.repeat; repeatIndex += 1) {
+      const passages = entry.cards.flatMap(card => card.passages.map(passage => ({
+        ...passage,
+        translation: card.translation
+      })));
+      passages.forEach((passage, verseIndex) => {
+        const playlistMetadata = {
+          playlistId: playlist.id,
+          playlistTitle: playlist.title,
+          entryId: entry.id,
+          entryLabel: entry.label,
+          entryIndex,
+          entryCount,
+          repeatIndex,
+          repeatCount: entry.repeat,
+          verseIndex,
+          verseCount: passages.length
+        };
+        items.push({
+          ref: passage.ref,
+          text: passage.text,
+          translation: passage.translation,
+          playlistMetadata,
+          playlistId: playlist.id,
+          playlistTitle: playlist.title,
+          entryId: entry.id,
+          entryLabel: entry.label,
+          entryPosition: entryIndex + 1,
+          entryCount,
+          playlistEntryIndex: entryIndex,
+          playlistEntryCount: entryCount,
+          repeatPosition: repeatIndex + 1,
+          repeatCount: entry.repeat,
+          repeatIteration: repeatIndex,
+          repeatTotal: entry.repeat,
+          versePosition: verseIndex + 1,
+          verseCount: passages.length
+        });
+      });
+    }
+  });
+  return items;
+}
+
+function playPlaylist(playlistId, { entryId = null } = {}) {
+  const playlist = loadPlaylists().find(item => item.id === playlistId);
+  if (!playlist) return;
+  const entries = entryId
+    ? playlist.entries.filter(entry => entry.id === entryId)
+    : playlist.entries;
+  const estimatedItems = entries.reduce((total, entry) => (
+    total + entry.repeat * entry.cards.reduce((sum, card) => sum + card.passages.length, 0)
+  ), 0);
+  if (estimatedItems > MAX_PLAYLIST_QUEUE_ITEMS) {
+    showToast('This queue is too large — reduce a few repeat counts');
+    return;
+  }
+  const items = compilePlaylistItems(playlist, entries);
+  if (!items.length) {
+    showToast('Add scripture cards before playing');
+    return;
+  }
+  Voice.playScripture(items, {
+    sessionType: 'playlist',
+    sessionLabel: entryId ? `${playlist.title} · ${entries[0].label}` : playlist.title,
+    sessionMetadata: { playlistId: playlist.id, entryId },
+    repeatMode: entryId ? 'none' : playlist.loop ? 'passage' : 'none'
+  });
+  showToast(playlist.loop && !entryId ? 'Playing on a continuous loop' : 'Playlist started');
+}
+
+function playlistEntryPreview(entry) {
+  const refs = entry.cards.map(playlistCardLabel);
+  const visible = refs.slice(0, 3);
+  return `${visible.map(ref => `<span>${escHtml(ref)}</span>`).join('')}${refs.length > visible.length ? `<span>+ ${refs.length - visible.length} more card${refs.length - visible.length !== 1 ? 's' : ''}</span>` : ''}`;
+}
+
+function renderPlaylistList() {
+  const playlists = loadPlaylists();
+  if (!playlists.length) {
+    playlistList.innerHTML = '';
+    return;
+  }
+  playlistList.innerHTML = playlists.map(playlist => {
+    const versePlays = countPlaylistVerses(playlist, { includeRepeats: true });
+    return `
+      <button class="playlist-list-card${playlist.id === activePlaylistId ? ' active' : ''}" data-playlist-id="${escHtml(playlist.id)}" type="button" aria-pressed="${playlist.id === activePlaylistId}">
+        <span class="playlist-list-card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h9M5 12h9M5 17h6M18 8v9l3-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="playlist-list-card-copy">
+          <strong>${escHtml(playlist.title)}</strong>
+          <span>${playlist.entries.length} item${playlist.entries.length !== 1 ? 's' : ''} · ${versePlays} verse play${versePlays !== 1 ? 's' : ''}</span>
+        </span>
+        ${playlist.loop ? '<span class="playlist-loop-badge">Loop</span>' : ''}
+        <span class="playlist-list-chevron" aria-hidden="true">›</span>
+      </button>
+    `;
+  }).join('');
+  playlistList.querySelectorAll('.playlist-list-card').forEach(button => {
+    button.addEventListener('click', () => openPlaylist(button.dataset.playlistId, { resetScroll: true }));
+  });
+}
+
+function renderPlaylistEmpty() {
+  playlistDetail.innerHTML = `
+    <div class="playlist-empty">
+      <div class="playlist-empty-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h9M5 12h9M5 17h6M18 8v9l3-2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <h2>Your scripture, in the order you want.</h2>
+      <p>Create a playlist, choose grouped cards from any stack, set how many times each one plays, and optionally loop the whole sequence.</p>
+      <button id="playlist-empty-new" class="primary-pill-btn" type="button">Create Playlist</button>
+    </div>
+  `;
+  playlistDetail.querySelector('#playlist-empty-new')?.addEventListener('click', () => newPlaylistBtn.click());
+}
+
+function renderPlaylistView(playlistId, { preserveScroll = false, resetScroll = false } = {}) {
+  const playlist = loadPlaylists().find(item => item.id === playlistId);
+  if (!playlist) {
+    renderPlaylistEmpty();
+    return;
+  }
+  const scrollTop = preserveScroll ? playlistsContent.scrollTop : 0;
+  const versePlays = countPlaylistVerses(playlist, { includeRepeats: true });
+  const isActiveSession = Voice.sessionType === 'playlist'
+    && Voice.state !== 'idle'
+    && Voice.currentItem?.playlistId === playlist.id;
+  const activeEntryId = isActiveSession ? Voice.currentItem?.entryId : null;
+
+  playlistDetail.innerHTML = `
+    <section class="playlist-editor" data-playlist-id="${escHtml(playlist.id)}">
+      <div class="playlist-editor-header">
+        <div class="playlist-editor-title-wrap">
+          <label class="sr-only" for="playlist-title-input">Playlist title</label>
+          <input id="playlist-title-input" class="playlist-title-input" value="${escHtml(playlist.title)}" maxlength="60" placeholder="Playlist title…" />
+          <p class="playlist-editor-stats">${playlist.entries.length} item${playlist.entries.length !== 1 ? 's' : ''} · ${versePlays} verse play${versePlays !== 1 ? 's' : ''}</p>
+        </div>
+        <button id="delete-playlist-btn" class="delete-playlist-btn" type="button">Delete</button>
+      </div>
+      <div class="playlist-editor-actions">
+        <button id="play-playlist-btn" class="playlist-play-btn" type="button" ${playlist.entries.length ? '' : 'disabled'}>
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 4.5 15 10l-9 5.5z" fill="currentColor"/></svg>
+          <span>${isActiveSession ? 'Restart playlist' : 'Play playlist'}</span>
+        </button>
+        <button id="add-playlist-items-btn" class="playlist-add-items-btn" type="button">+ Add from stacks</button>
+        <label class="playlist-loop-toggle">
+          <input id="playlist-loop-toggle" type="checkbox" ${playlist.loop ? 'checked' : ''} />
+          <span class="playlist-loop-switch" aria-hidden="true"></span>
+          <span><strong>Loop playlist</strong><small>Restart after the final item</small></span>
+        </label>
+      </div>
+      ${playlist.entries.length ? `
+        <div class="playlist-order-heading">
+          <div><strong>Play order</strong><span>Each item finishes all of its repeats before the next begins.</span></div>
+        </div>
+        <div class="playlist-entry-list" role="list" aria-label="Playlist items">
+          ${playlist.entries.map((entry, index) => `
+            <article class="playlist-entry${entry.id === activeEntryId ? ' is-playing' : ''}" data-entry-id="${escHtml(entry.id)}" role="listitem">
+              <button class="playlist-entry-order" data-action="move-to" type="button" aria-label="Move ${escHtml(entry.label)} to a specific position">${index + 1}</button>
+              <div class="playlist-entry-main">
+                <div class="playlist-entry-heading">
+                  <div>
+                    <strong>${escHtml(entry.label)}</strong>
+                    <span>${entry.cards.length} card${entry.cards.length !== 1 ? 's' : ''} · ${entry.cards.reduce((sum, card) => sum + card.passages.length, 0)} verse${entry.cards.reduce((sum, card) => sum + card.passages.length, 0) !== 1 ? 's' : ''}</span>
+                  </div>
+                  <button class="playlist-entry-preview-btn" data-action="play-entry" type="button" aria-label="Play ${escHtml(entry.label)}">Play</button>
+                </div>
+                <div class="playlist-entry-refs">${playlistEntryPreview(entry)}</div>
+                <div class="playlist-entry-controls">
+                  <div class="playlist-repeat-control" aria-label="Repeat count for ${escHtml(entry.label)}">
+                    <button data-action="repeat-down" type="button" aria-label="Play ${escHtml(entry.label)} one fewer time" ${entry.repeat <= PLAYLIST_REPEAT_MIN ? 'disabled' : ''}>−</button>
+                    <label><span>Play</span><input data-action="repeat-input" type="number" inputmode="numeric" min="${PLAYLIST_REPEAT_MIN}" max="${PLAYLIST_REPEAT_MAX}" value="${entry.repeat}" aria-label="Number of times to play ${escHtml(entry.label)}" /><span>×</span></label>
+                    <button data-action="repeat-up" type="button" aria-label="Play ${escHtml(entry.label)} one more time" ${entry.repeat >= PLAYLIST_REPEAT_MAX ? 'disabled' : ''}>+</button>
+                  </div>
+                  <div class="playlist-order-controls">
+                    <button data-action="move-up" type="button" aria-label="Move ${escHtml(entry.label)} earlier" ${index === 0 ? 'disabled' : ''}>↑</button>
+                    <button data-action="move-down" type="button" aria-label="Move ${escHtml(entry.label)} later" ${index === playlist.entries.length - 1 ? 'disabled' : ''}>↓</button>
+                    <button data-action="duplicate" type="button" aria-label="Duplicate ${escHtml(entry.label)}">Duplicate</button>
+                    <button data-action="remove" class="danger" type="button" aria-label="Remove ${escHtml(entry.label)}">Remove</button>
+                  </div>
+                </div>
+              </div>
+            </article>
+          `).join('')}
+        </div>
+      ` : `
+        <div class="playlist-editor-empty">
+          <strong>No scripture items yet.</strong>
+          <span>Add cards from your stacks, either separately or as one repeatable group.</span>
+          <button id="playlist-empty-add" type="button">Choose from stacks</button>
+        </div>
+      `}
+    </section>
+  `;
+
+  const titleInput = playlistDetail.querySelector('#playlist-title-input');
+  if (titleInput) {
+    const commitTitle = debounce(value => {
+      const target = loadPlaylists().find(item => item.id === playlist.id);
+      const title = String(value || '').trim();
+      if (!target || !title || target.title === title) return;
+      const previousTitle = target.title;
+      target.title = title;
+      touchPlaylist(target);
+      if (!savePlaylists(loadPlaylists(), { render: false })) {
+        titleInput.value = previousTitle;
+        return;
+      }
+      renderPlaylistList();
+    }, 180);
+    titleInput.addEventListener('input', () => commitTitle(titleInput.value));
+    titleInput.addEventListener('blur', () => {
+      commitTitle.flush();
+      if (!titleInput.value.trim()) titleInput.value = playlist.title;
+    });
+  }
+
+  if (preserveScroll) restoreScrollTop(playlistsContent, scrollTop);
+  else if (resetScroll) resetChromeScroll(playlistsContent, playlistsPane);
+}
+
+function renderPlaylists({ preserveScroll = false } = {}) {
+  const playlists = loadPlaylists();
+  if (!playlists.some(playlist => playlist.id === activePlaylistId)) {
+    activePlaylistId = playlists[0]?.id || null;
+  }
+  renderPlaylistList();
+  if (activePlaylistId) renderPlaylistView(activePlaylistId, { preserveScroll });
+  else renderPlaylistEmpty();
+}
+
+function openPlaylist(playlistId, { resetScroll = false } = {}) {
+  if (!loadPlaylists().some(playlist => playlist.id === playlistId)) return;
+  activePlaylistId = playlistId;
+  renderPlaylistList();
+  renderPlaylistView(playlistId, { resetScroll });
+}
+
+function updatePlaylistEntry(playlistId, entryId, update, { focusAction = null } = {}) {
+  const playlists = loadPlaylists();
+  const playlist = playlists.find(item => item.id === playlistId);
+  const index = playlist?.entries.findIndex(entry => entry.id === entryId) ?? -1;
+  if (!playlist || index < 0) return false;
+  update(playlist.entries, index, playlist.entries[index]);
+  touchPlaylist(playlist);
+  if (!savePlaylists(playlists, { render: false })) {
+    renderPlaylistView(playlistId, { preserveScroll: true });
+    return false;
+  }
+  renderPlaylistList();
+  renderPlaylistView(playlistId, { preserveScroll: true });
+  if (focusAction) {
+    requestAnimationFrame(() => playlistDetail
+      .querySelector(`.playlist-entry[data-entry-id="${CSS.escape(entryId)}"] [data-action="${focusAction}"]`)
+      ?.focus({ preventScroll: true }));
+  }
+  return true;
+}
+
+function refreshPlaylistSummary(playlistId) {
+  const playlist = loadPlaylists().find(item => item.id === playlistId);
+  if (!playlist) return;
+  const versePlays = countPlaylistVerses(playlist, { includeRepeats: true });
+  const stats = playlistDetail.querySelector('.playlist-editor-stats');
+  if (stats) {
+    stats.textContent = `${playlist.entries.length} item${playlist.entries.length !== 1 ? 's' : ''} · ${versePlays} verse play${versePlays !== 1 ? 's' : ''}`;
+  }
+  renderPlaylistList();
+}
+
+function setPlaylistEntryRepeat(playlistId, entryId, nextRepeat) {
+  const playlists = loadPlaylists();
+  const playlist = playlists.find(item => item.id === playlistId);
+  const entry = playlist?.entries.find(item => item.id === entryId);
+  if (!playlist || !entry) return false;
+  const next = clampPlaylistRepeat(nextRepeat);
+  if (entry.repeat === next) {
+    const input = playlistDetail.querySelector(`.playlist-entry[data-entry-id="${CSS.escape(entryId)}"] [data-action="repeat-input"]`);
+    if (input) input.value = String(next);
+    return true;
+  }
+  entry.repeat = next;
+  touchPlaylist(playlist);
+  if (!savePlaylists(playlists, { render: false })) {
+    renderPlaylistView(playlistId, { preserveScroll: true });
+    return false;
+  }
+  const row = playlistDetail.querySelector(`.playlist-entry[data-entry-id="${CSS.escape(entryId)}"]`);
+  const savedEntry = loadPlaylists().find(item => item.id === playlistId)?.entries.find(item => item.id === entryId);
+  if (row && savedEntry) {
+    const input = row.querySelector('[data-action="repeat-input"]');
+    const down = row.querySelector('[data-action="repeat-down"]');
+    const up = row.querySelector('[data-action="repeat-up"]');
+    if (input) input.value = String(savedEntry.repeat);
+    if (down) down.disabled = savedEntry.repeat <= PLAYLIST_REPEAT_MIN;
+    if (up) up.disabled = savedEntry.repeat >= PLAYLIST_REPEAT_MAX;
+  }
+  refreshPlaylistSummary(playlistId);
+  return true;
+}
+
+function movePlaylistEntry(playlistId, entryId, direction) {
+  const playlists = loadPlaylists();
+  const playlist = playlists.find(item => item.id === playlistId);
+  const index = playlist?.entries.findIndex(entry => entry.id === entryId) ?? -1;
+  const targetIndex = direction === 'up' ? index - 1 : index + 1;
+  if (!playlist || index < 0 || targetIndex < 0 || targetIndex >= playlist.entries.length) return false;
+  [playlist.entries[index], playlist.entries[targetIndex]] = [playlist.entries[targetIndex], playlist.entries[index]];
+  touchPlaylist(playlist);
+  if (!savePlaylists(playlists, { render: false })) {
+    renderPlaylistView(playlistId, { preserveScroll: true });
+    return false;
+  }
+
+  const list = playlistDetail.querySelector('.playlist-entry-list');
+  const row = list?.querySelector(`.playlist-entry[data-entry-id="${CSS.escape(entryId)}"]`);
+  const sibling = direction === 'up' ? row?.previousElementSibling : row?.nextElementSibling;
+  if (!list || !row || !sibling) {
+    renderPlaylistView(playlistId, { preserveScroll: true });
+    return true;
+  }
+  if (direction === 'up') list.insertBefore(row, sibling);
+  else list.insertBefore(sibling, row);
+  const syncOrderRow = (entryRow, position, total) => {
+    const order = entryRow.querySelector('.playlist-entry-order');
+    const up = entryRow.querySelector('[data-action="move-up"]');
+    const down = entryRow.querySelector('[data-action="move-down"]');
+    if (order) order.textContent = String(position + 1);
+    if (up) up.disabled = position === 0;
+    if (down) down.disabled = position === total - 1;
+  };
+  syncOrderRow(row, targetIndex, playlist.entries.length);
+  syncOrderRow(sibling, index, playlist.entries.length);
+  requestAnimationFrame(() => row.querySelector(`[data-action="move-${direction}"]`)?.focus({ preventScroll: true }));
+  triggerHaptic(10);
+  return true;
+}
+
+function movePlaylistEntryTo(playlistId, entryId, requestedPosition) {
+  const playlists = loadPlaylists();
+  const playlist = playlists.find(item => item.id === playlistId);
+  const index = playlist?.entries.findIndex(entry => entry.id === entryId) ?? -1;
+  const targetIndex = Math.trunc(Number(requestedPosition)) - 1;
+  if (!playlist || index < 0 || !Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= playlist.entries.length) {
+    showToast(`Choose a position from 1 to ${playlist?.entries.length || 1}`);
+    return false;
+  }
+  if (index === targetIndex) return true;
+  const [entry] = playlist.entries.splice(index, 1);
+  playlist.entries.splice(targetIndex, 0, entry);
+  touchPlaylist(playlist);
+  if (!savePlaylists(playlists, { render: false })) {
+    renderPlaylistView(playlistId, { preserveScroll: true });
+    return false;
+  }
+
+  const list = playlistDetail.querySelector('.playlist-entry-list');
+  const rows = list ? Array.from(list.children) : [];
+  const row = rows[index];
+  const targetRow = rows[targetIndex];
+  if (!list || !row || !targetRow) {
+    renderPlaylistView(playlistId, { preserveScroll: true });
+    return true;
+  }
+  if (targetIndex < index) list.insertBefore(row, targetRow);
+  else list.insertBefore(row, targetRow.nextSibling);
+
+  const start = Math.min(index, targetIndex);
+  const end = Math.max(index, targetIndex);
+  const orderedRows = Array.from(list.children);
+  for (let position = start; position <= end; position += 1) {
+    const entryRow = orderedRows[position];
+    const order = entryRow.querySelector('.playlist-entry-order');
+    const up = entryRow.querySelector('[data-action="move-up"]');
+    const down = entryRow.querySelector('[data-action="move-down"]');
+    if (order) order.textContent = String(position + 1);
+    if (up) up.disabled = position === 0;
+    if (down) down.disabled = position === orderedRows.length - 1;
+  }
+  requestAnimationFrame(() => row.querySelector('[data-action="move-to"]')?.focus({ preventScroll: true }));
+  triggerHaptic(10);
+  return true;
+}
+
+function syncPlaylistPlaybackUi(item = Voice.currentItem, state = Voice.state) {
+  document.querySelectorAll('.playlist-entry.is-playing').forEach(entry => entry.classList.remove('is-playing'));
+  if (state === 'idle' || !item?.playlistId) return;
+  playlistDetail
+    .querySelector(`.playlist-editor[data-playlist-id="${CSS.escape(item.playlistId)}"] .playlist-entry[data-entry-id="${CSS.escape(item.entryId)}"]`)
+    ?.classList.add('is-playing');
+}
+
+function syncPlaylistLoopFromVoice() {
+  if (Voice.sessionType !== 'playlist' || Voice.state === 'idle' || Voice.sessionMetadata?.entryId) return;
+  const playlistId = Voice.currentItem?.playlistId || Voice.sessionMetadata?.playlistId;
+  const playlist = loadPlaylists().find(item => item.id === playlistId);
+  if (!playlist) return;
+  const shouldLoop = Voice.repeatMode === 'passage';
+  if (playlist.loop === shouldLoop) return;
+  playlist.loop = shouldLoop;
+  touchPlaylist(playlist);
+  if (!savePlaylists(loadPlaylists(), { render: false })) return;
+  renderPlaylistList();
+  const toggle = playlistDetail.querySelector(`#playlist-loop-toggle`);
+  if (toggle && playlist.id === activePlaylistId) toggle.checked = shouldLoop;
+}
+
+playlistsCache = readLocalPlaylists();
+
+newPlaylistBtn.addEventListener('click', async () => {
+  const title = await showPrompt('Name your playlist', 'e.g. Healing, Faith, Sleep…');
+  if (!title) return;
+  const playlists = loadPlaylists();
+  const stamp = nowTs();
+  const playlist = { id: genId(), title, loop: false, entries: [], createdAt: stamp, updatedAt: stamp };
+  playlists.push(playlist);
+  if (!savePlaylists(playlists, { render: false })) return;
+  setMode('playlists');
+  openPlaylist(playlist.id, { resetScroll: true });
+});
+
+playlistAddClose.addEventListener('click', () => closePlaylistAddSheet());
+playlistAddCancel.addEventListener('click', () => closePlaylistAddSheet());
+playlistAddBackdrop.addEventListener('click', event => {
+  if (event.target === playlistAddBackdrop) closePlaylistAddSheet();
+});
+playlistAddSheet.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closePlaylistAddSheet();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const focusable = Array.from(playlistAddSheet.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )).filter(element => element.getClientRects().length);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+playlistAddDestination.addEventListener('change', syncPlaylistAddDestinationUi);
+playlistNewName.addEventListener('input', syncPlaylistAddDestinationUi);
+playlistNewName.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !playlistAddConfirm.disabled) addSelectedCardsToPlaylist();
+});
+playlistAddSheet.querySelectorAll('input[name="playlist-add-mode"]').forEach(radio => {
+  radio.addEventListener('change', syncPlaylistAddModeUi);
+});
+playlistAddConfirm.addEventListener('click', addSelectedCardsToPlaylist);
+
+playlistDetail.addEventListener('change', event => {
+  const editor = event.target.closest('.playlist-editor');
+  const playlistId = editor?.dataset.playlistId;
+  if (!playlistId) return;
+
+  if (event.target.id === 'playlist-loop-toggle') {
+    const playlists = loadPlaylists();
+    const playlist = playlists.find(item => item.id === playlistId);
+    if (!playlist) return;
+    playlist.loop = event.target.checked;
+    touchPlaylist(playlist);
+    if (!savePlaylists(playlists, { render: false })) {
+      renderPlaylistView(playlistId, { preserveScroll: true });
+      return;
+    }
+    if (
+      Voice.sessionType === 'playlist' &&
+      Voice.state !== 'idle' &&
+      !Voice.sessionMetadata?.entryId &&
+      (Voice.currentItem?.playlistId || Voice.sessionMetadata?.playlistId) === playlistId
+    ) {
+      Voice.setRepeatMode(playlist.loop ? 'passage' : 'none');
+    }
+    renderPlaylistList();
+    showToast(playlist.loop ? 'Playlist loop is on' : 'Playlist loop is off');
+    return;
+  }
+
+  if (event.target.dataset.action === 'repeat-input') {
+    const entryId = event.target.closest('.playlist-entry')?.dataset.entryId;
+    if (!entryId) return;
+    setPlaylistEntryRepeat(playlistId, entryId, event.target.value);
+  }
+});
+
+playlistDetail.addEventListener('click', async event => {
+  const editor = event.target.closest('.playlist-editor');
+  const playlistId = editor?.dataset.playlistId;
+  if (!playlistId) return;
+
+  if (event.target.closest('#play-playlist-btn')) {
+    playPlaylist(playlistId);
+    return;
+  }
+  if (event.target.closest('#add-playlist-items-btn, #playlist-empty-add')) {
+    beginPlaylistSelection(playlistId);
+    return;
+  }
+  if (event.target.closest('#delete-playlist-btn')) {
+    const playlist = loadPlaylists().find(item => item.id === playlistId);
+    if (!playlist) return;
+    const ok = await showConfirm(`Delete “${playlist.title}”?`, 'Delete');
+    if (!ok) return;
+    const next = loadPlaylists().filter(item => item.id !== playlistId);
+    activePlaylistId = next[0]?.id || null;
+    if (!savePlaylists(next, { render: false })) {
+      activePlaylistId = playlistId;
+      renderPlaylists();
+      return;
+    }
+    if (Voice.sessionType === 'playlist' && Voice.currentItem?.playlistId === playlistId) Voice.stopScripture();
+    renderPlaylists();
+    showToast('Playlist deleted');
+    return;
+  }
+
+  const actionButton = event.target.closest('[data-action]');
+  const action = actionButton?.dataset.action;
+  const entryId = actionButton?.closest('.playlist-entry')?.dataset.entryId;
+  if (!action || !entryId) return;
+
+  if (action === 'play-entry') {
+    playPlaylist(playlistId, { entryId });
+    return;
+  }
+  if (action === 'move-to') {
+    const playlist = loadPlaylists().find(item => item.id === playlistId);
+    const entry = playlist?.entries.find(item => item.id === entryId);
+    if (!playlist || !entry) return;
+    const position = await showPrompt(`Move “${entry.label}” to position`, `1–${playlist.entries.length}`, 'Move');
+    if (position != null) movePlaylistEntryTo(playlistId, entryId, position);
+    return;
+  }
+  if (action === 'repeat-down' || action === 'repeat-up') {
+    const delta = action === 'repeat-up' ? 1 : -1;
+    const entry = loadPlaylists().find(item => item.id === playlistId)?.entries.find(item => item.id === entryId);
+    if (entry && setPlaylistEntryRepeat(playlistId, entryId, entry.repeat + delta)) {
+      playlistDetail.querySelector(`.playlist-entry[data-entry-id="${CSS.escape(entryId)}"] [data-action="${action}"]`)?.focus({ preventScroll: true });
+    }
+    return;
+  }
+  if (action === 'move-up' || action === 'move-down') {
+    movePlaylistEntry(playlistId, entryId, action === 'move-up' ? 'up' : 'down');
+    return;
+  }
+  if (action === 'duplicate') {
+    const saved = updatePlaylistEntry(playlistId, entryId, (entries, index, entry) => {
+      const copy = JSON.parse(JSON.stringify(entry));
+      copy.id = genId();
+      entries.splice(index + 1, 0, copy);
+    });
+    if (saved) showToast('Item duplicated');
+    return;
+  }
+  if (action === 'remove') {
+    const saved = updatePlaylistEntry(playlistId, entryId, (entries, index) => entries.splice(index, 1));
+    if (saved) showToast('Item removed');
+  }
+});
 
 // ── Toast ─────────────────────────────────────────────
 let activeToast = null;
@@ -4037,31 +5040,34 @@ function closeStackPicker({ restoreFocus = true } = {}) {
   if (!activePicker) return;
   const picker = activePicker;
   activePicker = null;
+  const returnFocusElement = picker.returnFocusElement;
+  const fallbackFocusElement = picker.dataset.role === 'stack-switcher'
+    ? document.getElementById('stack-switcher-btn')
+    : null;
+
+  // Move focus out before hiding the picker. Otherwise browsers correctly warn
+  // that aria-hidden is being applied to an element containing keyboard focus.
+  if (picker.contains(document.activeElement)) {
+    const focusTarget = returnFocusElement?.isConnected ? returnFocusElement : fallbackFocusElement;
+    if (restoreFocus && focusTarget?.isConnected) {
+      focusTarget.focus({ preventScroll: true });
+    } else {
+      document.activeElement?.blur?.();
+    }
+  }
 
   if (picker.dataset.role === 'stack-switcher') {
     document.getElementById('stack-switcher-btn')?.setAttribute('aria-expanded', 'false');
-    const returnFocusElement = picker.returnFocusElement;
     picker.classList.remove('open');
     picker.setAttribute('aria-hidden', 'true');
-    setTimeout(() => {
-      picker.remove();
-      if (restoreFocus && returnFocusElement?.isConnected) {
-        returnFocusElement.focus({ preventScroll: true });
-      }
-    }, prefersReducedMotion() ? 0 : 220);
+    setTimeout(() => picker.remove(), prefersReducedMotion() ? 0 : 220);
     return;
   }
 
   if (picker.dataset.role === 'stack-add') {
-    const returnFocusElement = picker.returnFocusElement;
     picker.classList.remove('open');
     picker.setAttribute('aria-hidden', 'true');
-    setTimeout(() => {
-      picker.remove();
-      if (restoreFocus && returnFocusElement?.isConnected) {
-        returnFocusElement.focus({ preventScroll: true });
-      }
-    }, prefersReducedMotion() ? 0 : 220);
+    setTimeout(() => picker.remove(), prefersReducedMotion() ? 0 : 220);
     return;
   }
 
@@ -4284,8 +5290,10 @@ applySettings(loadSettings());
 measureAllPaneChrome();
 bindPaneChromeScroll(bibleContent, biblePane, { minScrollTop: 168, hideDistance: 128, showDistance: 56, toggleCooldownMs: 420 });
 bindPaneChromeScroll(stacksContent, stacksPane, { minScrollTop: 148, hideDistance: 120, showDistance: 56, toggleCooldownMs: 420 });
+bindPaneChromeScroll(playlistsContent, playlistsPane, { minScrollTop: 148, hideDistance: 120, showDistance: 56, toggleCooldownMs: 420 });
 resetChromeScroll(bibleContent, biblePane);
 resetChromeScroll(stacksContent, stacksPane);
+resetChromeScroll(playlistsContent, playlistsPane);
 syncBottomNavChrome();
 
 // ── Start ─────────────────────────────────────────────
