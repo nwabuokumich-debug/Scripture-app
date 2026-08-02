@@ -685,6 +685,7 @@ class VoiceEngine {
     this._heartbeat = null;
     this._pausedInDelay = false;
     this._endedWhilePaused = false;
+    this._endedWhilePausedDetail = null;
     this._errorStreak = 0;
     this.sessionType = 'scripture';
     this.sessionLabel = '';
@@ -862,7 +863,7 @@ class VoiceEngine {
       try { this.provider.prefetch(nextItem.text, { voiceId: this.settings.voiceId, rate: this.settings.rate, item: nextItem }); } catch {}
     }
 
-    const settle = (errored) => {
+    const settle = (errored, playbackDetail = null) => {
       if (myToken !== this.token) return;    // stale: stopped or restarted
       this._stopHeartbeat();
       this.statusLabel = '';
@@ -881,17 +882,19 @@ class VoiceEngine {
       try { this.callbacks.onItemEnd?.(item, i, this, { reason: errored ? 'error' : 'ended' }); } catch {}
       // iOS pause() is flaky: an utterance can finish during a "pause".
       // Remember that so resume() advances instead of hanging.
-      if (this.state === 'paused') { this._endedWhilePaused = true; return; }
-      this._advanceAfter(i);
+      if (this.state === 'paused') {
+        this._endedWhilePaused = true;
+        this._endedWhilePausedDetail = playbackDetail;
+        return;
+      }
+      this._advanceAfter(i, playbackDetail);
     };
-    promise.then(() => settle(false)).catch(() => settle(true));
+    promise.then(detail => settle(false, detail)).catch(() => settle(true));
   }
 
-  _advanceAfter(i) {
-    if (this.state !== 'playing') return;    // paused mid-utterance must not advance
+  _nextTargetAfter(i) {
     const mode = this._repeatMode();
     const isLast = i >= this.playlist.length - 1;
-
     let nextIndex = null;
     let atRepeatBoundary = false;
     if (mode === 'verse') {
@@ -901,12 +904,22 @@ class VoiceEngine {
     } else { // none
       nextIndex = isLast ? null : i + 1;
     }
+    return { nextIndex, atRepeatBoundary };
+  }
+
+  _advanceAfter(i, playbackDetail = null) {
+    if (this.state !== 'playing') return;    // paused mid-utterance must not advance
+    const { nextIndex, atRepeatBoundary } = this._nextTargetAfter(i);
 
     if (nextIndex === null) { this._finish(); return; }
 
-    const delay = Math.max(0, this._repeatDelayMs() || 0);
+    // A stitched stream reports nativeWrapped only after its own embedded gap
+    // and loop boundary. In that case the media element has already advanced
+    // to verse one, so neither a second timer nor a seek may own the boundary.
+    const providerOwnedBoundary = atRepeatBoundary && !!playbackDetail?.nativeWrapped;
+    const delay = providerOwnedBoundary ? 0 : Math.max(0, this._repeatDelayMs() || 0);
     // Anything other than stepping onto the next verse is a deliberate restart.
-    const restart = nextIndex !== i + 1;
+    const restart = providerOwnedBoundary ? false : nextIndex !== i + 1;
     const go = () => { if (this.state === 'playing') this._playIndex(nextIndex, { restart }); };
     if (delay > 0 && atRepeatBoundary) {
       const myToken = this.token;
@@ -938,8 +951,10 @@ class VoiceEngine {
     buzz();
     this._emitState();
     if (this._endedWhilePaused) {
+      const playbackDetail = this._endedWhilePausedDetail;
       this._endedWhilePaused = false;
-      this._advanceAfter(this.index);   // current chunk already finished; move on
+      this._endedWhilePausedDetail = null;
+      this._advanceAfter(this.index, playbackDetail); // current chunk already finished; move on
     } else if (this._pausedInDelay) {
       const pending = this._pendingDelay;
       this._pausedInDelay = false;
@@ -1007,6 +1022,7 @@ class VoiceEngine {
     this._pausedInDelay = false;
     this._pendingDelay = null;
     this._endedWhilePaused = false;
+    this._endedWhilePausedDetail = null;
     this.provider.cancel();
   }
 
@@ -1018,6 +1034,8 @@ class VoiceEngine {
     this.statusLabel = '';
     this._pausedInDelay = false;
     this._pendingDelay = null;
+    this._endedWhilePaused = false;
+    this._endedWhilePausedDetail = null;
     this.state = 'idle';
     this.provider.cancel();
     try { this.provider.endSession?.(); } catch {}
@@ -1073,14 +1091,15 @@ class VoiceEngine {
         count: this.playlist.length,
       }) === true;
     } catch {}
-    // A provider may need a new stream after a setting change. If the current
-    // item has already ended and we are paused at its repeat boundary, leave
-    // that transition intact; replaying `this.index` would repeat the item an
-    // unintended extra time on resume.
     if (rebuild && this.state !== 'idle') {
-      if (this.state === 'paused' && (this._pausedInDelay || this._endedWhilePaused)) return;
       const wasPaused = this.state === 'paused';
-      this.playScripture(this.playlist, { ...this.sessionOptions, startIndex: this.index });
+      const resumeAfterBoundary = wasPaused && (this._pausedInDelay || this._endedWhilePaused);
+      const target = resumeAfterBoundary ? this._nextTargetAfter(this.index).nextIndex : this.index;
+      if (target === null) {
+        this._finish();
+        return;
+      }
+      this.playScripture(this.playlist, { ...this.sessionOptions, startIndex: target });
       if (wasPaused) this.pauseScripture();
     }
   }
@@ -1092,6 +1111,7 @@ class VoiceEngine {
     if (this.state === 'paused') {
       this._pausedInDelay = false;
       this._endedWhilePaused = true;
+      this._endedWhilePausedDetail = null;
     } else if (this.state === 'playing') {
       this._pausedInDelay = false;
       this._advanceAfter(this.index);
@@ -1647,12 +1667,28 @@ const SEQ_CONCURRENCY = 6;
 // in-memory MP3 is wasteful and can crash mobile Safari; normal passages and
 // medium playlists still get the lock-screen-safe stitched path.
 const MAX_STITCHED_ITEMS = 180;
-const SEQUENCE_READY_WAIT_MS = 140;
 
 // A valid, empty WAV. Playing this inside a user gesture is what unlocks the
 // audio element on iOS, so the real play() — which now happens after fetching
 // and stitching a whole chapter — isn't rejected for being outside a gesture.
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
+
+// Repeat delays have to live inside the media stream. JavaScript timers are
+// suspended when a phone locks, while a looping <audio> element keeps going.
+// These MPEG frames match the rendered verse files and decode as silence.
+const SILENCE_HEADER = [0xFF, 0xF3, 0xC4, 0xC0];
+const SILENCE_FRAME_BYTES = 384;
+const SILENCE_FRAME_MS = 24;
+
+function silenceBlob(ms) {
+  const frames = Math.max(1, Math.round(ms / SILENCE_FRAME_MS));
+  const bytes = new Uint8Array(frames * SILENCE_FRAME_BYTES);
+  for (let i = 0; i < frames; i++) bytes.set(SILENCE_HEADER, i * SILENCE_FRAME_BYTES);
+  return {
+    blob: new Blob([bytes], { type: 'audio/mpeg' }),
+    seconds: (frames * SILENCE_FRAME_MS) / 1000,
+  };
+}
 
 // Read a blob's playing time without attaching it to the visible player.
 function measureDuration(blob) {
@@ -1701,6 +1737,11 @@ class AudioFileProvider {
     this._paused = false;
     this._resumeWaiters = [];
     this._srcUrl = null;           // object URL currently attached to the element
+    this._transportMode = '';
+    this._fileGapMs = 0;
+    this._fileGapRate = 1;
+    this._preparedTransport = '';
+    this._seekVersion = 0;
 
     // A whole passage stitched into one continuous stream. This is what lets
     // playback survive the screen locking: with every verse in a single
@@ -1864,8 +1905,23 @@ class AudioFileProvider {
     this._seq = null;
     this._seqPromise = null;
     this._seqKey = '';
+    // This preparation belongs to a brand-new engine session. The prior
+    // stitched source may remain attached for iOS audio-unlock purposes, but
+    // it must not masquerade as the transport chosen for the new session.
+    this._transportMode = '';
+    this._fileGapMs = 0;
+    this._fileGapRate = 1;
+    this._preparedTransport = '';
     if (repeat.repeatMode !== undefined) this._repeatOpts = repeat;
     if (!this._canPlay() || !items?.length) return;
+    const canStitch = items.length <= MAX_STITCHED_ITEMS
+      && !(repeat.repeatMode === 'verse' && items.length > 1)
+      && items.every(item => item?.ref);
+    this._preparedTransport = canStitch ? 'sequence' : 'file';
+    // Verse repeat must own exactly one verse. A stitched multi-verse blob
+    // would continue into verse two while JavaScript is suspended, so keep
+    // this mode on a standalone, natively looping audio file instead.
+    if (repeat.repeatMode === 'verse' && items.length > 1) return;
     if (items.length > MAX_STITCHED_ITEMS) {
       return;
     }
@@ -1913,11 +1969,28 @@ class AudioFileProvider {
         t += durations[i];
       });
 
+      // Keep the repeat pause inside the media stream. That lets the browser's
+      // native audio loop own the complete passage even while JavaScript is
+      // suspended by a locked phone.
+      const pieces = blobs.slice();
+      const gapMs = Math.max(0, Number(this._repeatOpts?.repeatDelayMs) || 0);
+      const gapRate = Number(this._repeatOpts?.rate) || 1;
+      let gap = 0;
+      if (gapMs > 0 && this._nativeLoop(this._repeatOpts, true)) {
+        // playbackRate also scales silence, so encode a proportionally longer
+        // or shorter gap to keep the user's delay in real-world seconds.
+        const silence = silenceBlob(gapMs * gapRate);
+        pieces.push(silence.blob);
+        gap = silence.seconds;
+      }
+
       const seq = {
         key,
+        gapMs: gap > 0 ? gapMs : 0,
+        gapRate: gap > 0 ? gapRate : 1,
         parts,
-        total: t,
-        blob: new Blob(blobs, { type: 'audio/mpeg' }),
+        total: t + gap,
+        blob: new Blob(pieces, { type: 'audio/mpeg' }),
       };
       onStatus?.('');
       return seq;
@@ -1926,15 +1999,16 @@ class AudioFileProvider {
 
   async _sequence(index, ref, itemTranslation = null) {
     if (!this._seqPromise) return null;
-    let timer = null;
-    const seq = this._seq || await Promise.race([
-      this._seqPromise,
-      new Promise(resolve => { timer = setTimeout(() => resolve(null), SEQUENCE_READY_WAIT_MS); })
-    ]);
-    if (timer) clearTimeout(timer);
+    // Never switch from per-verse playback to a stitched passage halfway
+    // through a session. Waiting here guarantees verse one and every repeat
+    // use the same continuous transport and the same offsets.
+    const seq = this._seq || await this._seqPromise;
     if (!seq) return null;
     if (this._seq !== seq) {
       this._seq = seq;
+      this._transportMode = 'sequence';
+      this._fileGapMs = 0;
+      this._fileGapRate = 1;
       this._attach(seq.blob);
     }
     const part = seq.parts[index];
@@ -1947,30 +2021,97 @@ class AudioFileProvider {
   // at all, which is the only way repeat keeps going once the screen locks.
   // It is only correct when the loaded stream is exactly what should repeat:
   // the whole passage for passage-repeat, or a single-verse playlist for
-  // verse-repeat. Delayed repeats deliberately stay on the engine-timer path:
-  // if the element looped too, both clocks would race and restart the first
-  // words after every boundary.
+  // verse-repeat. Playback rate does not change that ownership, and repeat
+  // silence is embedded in a stitched stream so delays stay lock-screen-safe.
   _nativeLoop(opts = {}, isSequence = false) {
-    if (opts.rate != null && Math.abs((Number(opts.rate) || 1) - 1) > 0.001) return false;
-    if (Math.max(0, Number(opts.repeatDelayMs) || 0) > 0) return false;
     // Passage looping is only safe when the element contains the entire
     // stitched passage. On the per-verse fallback path it would trap playback
     // on the first verse forever.
     if (opts.repeatMode === 'passage') return isSequence;
-    if (opts.repeatMode === 'verse') return (opts.count || 1) === 1;
+    if (opts.repeatMode === 'verse') return !isSequence || (opts.count || 1) === 1;
     return false;
+  }
+
+  _effectivePlaybackOpts(opts = {}) {
+    const latest = this._repeatOpts || {};
+    return {
+      ...opts,
+      repeatMode: latest.repeatMode ?? opts.repeatMode,
+      repeatDelayMs: latest.repeatDelayMs ?? opts.repeatDelayMs,
+      rate: Number.isFinite(latest.rate) ? latest.rate : opts.rate,
+      count: Number.isFinite(latest.count) ? latest.count : opts.count,
+    };
   }
 
   applyRepeat(opts = {}) {
     this._repeatOpts = opts;
+
+    const desiredTransport = (opts.count || 1) <= MAX_STITCHED_ITEMS
+      && !(opts.repeatMode === 'verse' && (opts.count || 1) > 1)
+      ? 'sequence'
+      : 'file';
+    if (!this._transportMode && this._preparedTransport && desiredTransport !== this._preparedTransport) {
+      this._seq = null;
+      this._seqPromise = null;
+      this._seqKey = '';
+      this._preparedTransport = desiredTransport;
+      return true;
+    }
+
+    // Switching a multi-item stitched passage to Verse repeat must replace it
+    // with the current verse's standalone file. Only that file can loop
+    // natively through a locked screen without drifting into the next verse.
+    if (this._seq && opts.repeatMode === 'verse' && (opts.count || 1) > 1) {
+      if (this._el) this._el.loop = false;
+      this._seq = null;
+      this._seqPromise = null;
+      this._seqKey = '';
+      return true;
+    }
+
     if (this._el) {
       this._el.loop = this._nativeLoop(opts, !!this._seq);
       if (Number.isFinite(opts.rate)) this._el.playbackRate = opts.rate;
+    }
+
+    // A lock-screen-safe repeat delay is encoded into the stitched blob. If
+    // that delay changes, rebuild the sequence before continuing so native
+    // looping and the visible setting always agree.
+    const wantGap = this._seq && this._nativeLoop(opts, true)
+      ? Math.max(0, Number(opts.repeatDelayMs) || 0)
+      : 0;
+    const wantGapRate = Number(opts.rate) || 1;
+    const haveGap = this._seq?.gapMs || 0;
+    const haveGapRate = this._seq?.gapRate || 1;
+    if (this._seq && (
+      wantGap !== haveGap
+      || (wantGap > 0 && Math.abs(wantGapRate - haveGapRate) > 0.001)
+    )) {
+      this._seq = null;
+      this._seqPromise = null;
+      this._seqKey = '';
+      return true;
+    }
+
+    if (!this._seq && this._transportMode === 'file') {
+      const wantFileGap = this._nativeLoop(opts, false)
+        ? Math.max(0, Number(opts.repeatDelayMs) || 0)
+        : 0;
+      const wantFileGapRate = Number(opts.rate) || 1;
+      if (
+        wantFileGap !== this._fileGapMs
+        || (wantFileGap > 0 && Math.abs(wantFileGapRate - this._fileGapRate) > 0.001)
+      ) return true;
+
+      // Leaving Verse mode should restore the continuous multi-verse stream,
+      // otherwise the next boundary would once again depend on page timers.
+      if ((opts.count || 1) > 1 && opts.repeatMode !== 'verse') return true;
     }
     return false;
   }
 
   _playSequenced(part, opts = {}) {
+    opts = this._effectivePlaybackOpts(opts);
     const el = this._element();
     el.playbackRate = opts.rate || 1;
     this._repeatOpts = opts;
@@ -1989,6 +2130,18 @@ class AudioFileProvider {
       el.currentTime = part.start;
     }
 
+    const nativeRepeatBoundary = el.loop && (
+      (opts.repeatMode === 'passage' && opts.index >= (opts.count || 1) - 1)
+      || (opts.repeatMode === 'verse' && (opts.count || 1) === 1)
+    );
+    const sequenceEnd = Math.max(part.end, Number(this._seq?.total) || 0);
+    // Native looping crosses from the tail of the media to its opening. Keep
+    // the recognition windows disjoint so an arbitrary backward clock move
+    // within the final verse cannot look like that boundary.
+    const wrapWindow = Math.min(1.5, sequenceEnd * 0.45);
+    let previousTime = el.currentTime;
+    let observedSeekVersion = this._seekVersion;
+
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         el.removeEventListener('timeupdate', onTime);
@@ -1996,7 +2149,27 @@ class AudioFileProvider {
         el.removeEventListener('error', onErr);
         this._settle = null;
       };
-      const onTime = () => { if (el.currentTime >= part.end - 0.02) { cleanup(); resolve(); } };
+      const onTime = () => {
+        const currentTime = el.currentTime;
+        if (nativeRepeatBoundary) {
+          // Back/forward controls and scrubber moves are deliberate seeks, not
+          // native loop boundaries. Ignore their first resulting timeupdate so
+          // a backward seek in the final verse cannot jump the logical queue
+          // to verse one.
+          if (observedSeekVersion !== this._seekVersion) {
+            observedSeekVersion = this._seekVersion;
+            previousTime = currentTime;
+            return;
+          }
+          const wrapped = previousTime >= sequenceEnd - wrapWindow
+            && currentTime <= wrapWindow
+            && currentTime + 0.05 < previousTime;
+          previousTime = currentTime;
+          if (wrapped) { cleanup(); resolve({ nativeWrapped: true }); }
+          return;
+        }
+        if (currentTime >= part.end - 0.02) { cleanup(); resolve(); }
+      };
       const onEnd  = () => { cleanup(); resolve(); };
       const onErr  = () => { cleanup(); reject(new Error('audio element error')); };
       this._settle = { cleanup };
@@ -2084,8 +2257,23 @@ class AudioFileProvider {
   }
 
   _play(blob, opts = {}) {
-    const el = this._attach(blob);
+    opts = this._effectivePlaybackOpts(opts);
     this._repeatOpts = opts;
+    const gapMs = this._nativeLoop(opts, false)
+      ? Math.max(0, Number(opts.repeatDelayMs) || 0)
+      : 0;
+    let mediaBlob = blob;
+    let gap = 0;
+    const gapRate = Number(opts.rate) || 1;
+    if (gapMs > 0) {
+      const silence = silenceBlob(gapMs * gapRate);
+      mediaBlob = new Blob([blob, silence.blob], { type: 'audio/mpeg' });
+      gap = silence.seconds;
+    }
+    this._transportMode = 'file';
+    this._fileGapMs = gap > 0 ? gapMs : 0;
+    this._fileGapRate = gap > 0 ? gapRate : 1;
+    const el = this._attach(mediaBlob);
     el.loop = this._nativeLoop(opts, false);
     return new Promise((resolve, reject) => {
       const done = (fn) => (...a) => { this._settle = null; el.onended = el.onerror = null; fn(...a); };
@@ -2108,6 +2296,9 @@ class AudioFileProvider {
     if (!this._seq) {
       try { el.removeAttribute('src'); el.load(); } catch {}
       if (this._srcUrl) { try { URL.revokeObjectURL(this._srcUrl); } catch {} this._srcUrl = null; }
+      this._transportMode = '';
+      this._fileGapMs = 0;
+      this._fileGapRate = 1;
     }
     this._settle = null;
   }
@@ -2174,6 +2365,7 @@ class AudioFileProvider {
   seekTo(seconds) {
     const p = this.getProgress();
     if (!p) return;
+    this._seekVersion++;
     try { this._el.currentTime = Math.max(0, Math.min(seconds, p.duration - 0.05)); } catch {}
   }
 
